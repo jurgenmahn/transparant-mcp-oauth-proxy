@@ -1,0 +1,8 @@
+/backup_config/*
+/app/config/local.yaml
+/app/config/dashboard.yaml
+/app/config/dashboard.yaml
+/conf/etc/hydra/config.yaml
+/OLD/*
+/conf/usr/local/apisix/conf/config.yaml
+/conf/usr/local/apisix/conf/base-config.yaml

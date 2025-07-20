@@ -1,0 +1,122 @@
+we're going to make a simple nodejs webpage to manage the settings of our mcp-proxy application. 
+To make configuration easier i want all configuration files to be editable in a one page wen based settings page.
+
+the configuration for this page can be found in config/dashboard.yaml below you will find copy of that file with comments so you know where each setting is used for.
+
+comments behind: ##
+
+
+dashboard.yaml ```
+
+dashboard:
+  users: ## users allowed to login to the dashboard
+    - email: jurgen@mahn.it
+      password_hash: $2b$10$RZYkFY3jNkCK9s89QWbuCe9mTC8GZi8vgTE9Il/24ZYko1jZqL0aq
+  configs: ## base paths where the editable config files can be found, we have a source and a destination. 
+    source-base-path: /app/config/managed-configs/
+    destination-base-path: /
+    files: ## location tot the config files the source and destination base paths have to be prepended to them ofcourse.
+      - type: yaml
+        name: mcp launcher
+        location: /app/config/local.yaml
+      - type: yaml
+        name: Apisix configuration
+        location: /usr/local/apisix/conf/config.yaml
+      - type: yaml
+        name: Apisix route and openid-connect configuration
+        location: /usr/local/apisix/conf/base-config.yaml     
+      - type: yaml
+        name: Hydra configuration
+        location: /etc/hydra/config.yaml
+```     
+
+in the source folder you will find a copy of the config files but with paceholders for some settings, each setting with a placeholder is an editable setting, other settings should be ignored.
+
+make a clear section block in the interface per file and use the name from the dashboard config as section header namem, so the interface shows per file the editable fields 
+
+when the user submits the page, the files are saved to their destinations where the placeholders will be replaced with the actual values from the form.
+
+on opening the page the values for each placeholder should be loaded from the destination files so the form always shows the actual settings in the form.
+
+placeholder format and options:
+
+placeholders are wrapped in: << >>
+placeholder values: << data-type::name::validation::allowed-values >>
+
+data-type: string, number, array, object-array, bcrypt
+
+string: regular string
+number: any number int, float or decimal
+array: array of items (yaml array)
+object-array, array of objects,
+example of object-array
+<< object-array::Authorized users::["email": "string::[a-Z0-9]{24,32}::null", "password_hash": "bcrypt::[a-Z0-9]{24,32}::null"] >>
+
+second example of object-array
+<< object-array::MCP services::["name": "string::Service friendly name::[a-Z0-9\-_]{3,32}::null", "startup_command": "string::Service startup command::[a-Z0-9]{1,256}::null", "options": "array::Startup parameters::[a-Z0-9]{1,256}::null"] >>                                                                                                                                                                                              │
+YAML Result:                                                                                                                                                                                                    │
+│       - name: playwright                                                                                                                                                                                 │
+│         startup_command: npx "@executeautomation/playwright-mcp-server"                                                                                                                                  │
+│       - name: dbhub                                                                                                                                                                                      │
+│         startup_command: npx "@bytebase/dbhub"                                                                                                                                                           │
+│         options:                                                                                                                                                                                         │
+│           - --transport                                                                                                                                                                                  │
+│           - stdio                                                                                                                                                                                        │
+│           - --dsn                                                                                                                                                                                        │
+│           - mysql://root:Qr1d8woy@192.168.113.2:3306/asp?sslmode=disable   
+
+bcrypt: fiels should be saved with  bcypt hashing (bcrypt.hash)
+
+name: visible name in the settings form
+validation: regex for form validation or null if not used
+allowed-values: null if not used else in quotes wrapped semicolon separated list with allowed values 
+
+
+when allowed values is null the input field in the settings form is text. is allowed values is filled show a nice multiselect field
+
+if multiple fields with the same same name are found even in different config files, just show them ones in a general section
+
+file to create: mcp-dashboard.js
+
+"
+yaml result:
+  - email: jurgen@mahn.it
+    password_hash: $2b$10$RZYkFY3jNkCK9s89QWbuCe9mTC8GZi8vgTE9Il/24ZYko1jZqL0aq
+
+placeholder format: (example piece of yaml)
+
+
+SOURCE:
+
+secrets:
+  system: << array::System secret::[a-Z0-9]{24,32}::null >>
+
+  
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+    default_scope: << array::Allowed oauth scopes::null::"openid;profile;email;mcp:read" >>
+
+webfinger:
+  oidc_discovery:
+    client_registration_url: https://<< string::Oauth registration domain::[a-Z0-9\.]{3,64}::null >>/oauth/register
+
+RESULT IN DESTINATION:
+
+secrets:
+  system: 
+    - hWjyCRkVonQ2o1fhK2Ti4v68Ns8KTJFu
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+    default_scope: 
+      - openid
+      - profile
+      - email
+      - mcp:read
+
+webfinger:
+  oidc_discovery:
+    client_registration_url: https://mcp.mahn.it/oauth/register

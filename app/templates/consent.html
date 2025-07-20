@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grant Permission - OAuth Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Grant Permission</h1>
+            <p>Authorization required</p>
+        </div>
+        <div class="form-container">
+            <div class="consent-info">
+                <h3>{{CLIENT_NAME}} requests access to:</h3>
+                <p>This application would like to access the following permissions on your behalf:</p>
+                <ul class="scope-list">
+                    {{SCOPE_LIST}}
+                </ul>
+            </div>
+            <form method="POST" action="/oauth/consent?consent_challenge={{CHALLENGE}}">
+                <button type="submit" class="btn">Allow Access</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

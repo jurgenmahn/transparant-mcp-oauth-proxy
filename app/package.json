@@ -1,0 +1,37 @@
+{
+  "name": "mcp-bridge-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Full MCP bridge to existing services",
+  "scripts": {
+    "start-launcher-proxy": "node mcp-launcher-proxy.js",
+    "start-oauth-proxy": "node mcp-oauth-proxy.js",
+    "dev": "concurrently \"node mcp-oauth-proxy.js\" \"node mcp-launcher-proxy.js\""
+  },
+  "dependencies": {
+    "@bytebase/dbhub": "latest",
+    "@cyanheads/git-mcp-server": "latest",
+    "@executeautomation/playwright-mcp-server": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/server-filesystem": "latest",
+    "@modelcontextprotocol/server-memory": "latest",
+    "@modelcontextprotocol/server-puppeteer": "latest",
+    "@tokenizin/mcp-npx-fetch": "latest",
+    "axios": "latest",
+    "bcrypt": "latest",
+    "body-parser": "latest",
+    "eventsource": "latest",
+    "express": "latest",
+    "node-fetch": "latest",
+    "undici": "latest",
+    "yaml": "^2.8.0",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest",
+    "nodemon": "latest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

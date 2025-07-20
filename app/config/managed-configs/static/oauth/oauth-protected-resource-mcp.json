@@ -1,0 +1,11 @@
+{
+    "resource_server": "https://<< string::Server domain::^[a-Z0-9\.\-]{2,128}\.[a-Z0-9\.\-]{2,128}$::null >>",
+    "authorization_servers": [
+        "https://<< string::Server domain::^[a-Z0-9\.\-]{2,128}\.[a-Z0-9\.\-]{2,128}$::null >>"
+    ],
+    "scopes_supported": [
+        "mcp:read",
+        "mcp:write"
+    ],
+    "resource_documentation": "https://<< string::Server domain::^[a-Z0-9\.\-]{2,128}\.[a-Z0-9\.\-]{2,128}$::null >>/docs"
+}

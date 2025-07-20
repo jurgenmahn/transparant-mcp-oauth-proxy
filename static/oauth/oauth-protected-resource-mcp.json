@@ -1,0 +1,11 @@
+{
+    "resource_server": "https://mcp.mahn.it",
+    "authorization_servers": [
+        "https://mcp.mahn.it"
+    ],
+    "scopes_supported": [
+        "mcp:read",
+        "mcp:write"
+    ],
+    "resource_documentation": "https://mcp.mahn.it/docs"
+}

@@ -1,0 +1,453 @@
+/apisix/consumer_groups/: init_dir
+/apisix/consumers/: init_dir
+/apisix/gen_id: '1'
+/apisix/global_rules/: init_dir
+/apisix/global_rules/PxQ49b5JjJRzvvKfMIvrd:
+  update_time: 1751506319
+  plugins:
+    proxy-buffering:
+      disable_proxy_buffering: true
+  id: PxQ49b5JjJRzvvKfMIvrd
+  create_time: 1751502862
+/apisix/plugin_configs/: init_dir
+/apisix/plugin_metadata/: init_dir
+/apisix/plugins/: init_dir
+/apisix/protos/: init_dir
+/apisix/routes/: init_dir
+/apisix/routes/api-docs:
+  id: api-docs
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - .+
+        - /oauth/api-docs.html
+      use_real_request_uri_unsafe: false
+  update_time: 1752706241
+  uri: /docs
+  create_time: 1752397404
+  upstream_id: '00000000000000000379'
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      - host: 127.0.0.1
+        port: 9280
+        weight: 1
+        priority: 0
+    type: roundrobin
+    pass_host: pass
+  status: 1
+  priority: 0
+/apisix/routes/hydra-authorize:
+  id: hydra-authorize
+  priority: 9000
+  create_time: 1751508000
+  update_time: 1751508000
+  uri: /authorize
+  status: 1
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - /authorize
+        - /oauth2/auth
+  name: hydra-authorize
+  upstream_id: up_hydra_public
+/apisix/routes/hydra-public:
+  id: hydra-public
+  priority: 10000
+  create_time: 1751507459
+  status: 1
+  uri: /oauth/*
+  update_time: 1751507459
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - /oauth/(.*)
+        - /$1
+      use_real_request_uri_unsafe: false
+  name: hydra-public
+  upstream_id: up_hydra_public
+/apisix/routes/hydra-wellknown:
+  uris:
+    - /.well-known/oauth-authorization-server
+    - /.well-known/openid-configuration
+  status: 1
+  name: hydra-wellknown
+  create_time: 1751508000
+  upstream_id: up_hydra_public
+  priority: 9000
+  id: hydra-wellknown
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - /.well-known/oauth-authorization-server
+        - /.well-known/openid-configuration
+      use_real_request_uri_unsafe: false
+  update_time: 1751911882
+/apisix/routes/mcp-sse-oauth:
+  status: 1
+  update_time: 1752427733
+  upstream:
+    hash_on: vars
+    nodes:
+      - host: 127.0.0.1
+        weight: 1
+        port: 3000
+        priority: 0
+    type: roundrobin
+    scheme: http
+    pass_host: pass
+  create_time: 1752408780
+  plugins:
+    openid-connect:
+      set_refresh_token_header: false
+      accept_unsupported_alg: true
+      realm: apisix
+      jwk_expires_in: 86400
+      revoke_tokens_on_logout: false
+      client_id: mcp-oauth-proxy
+      logout_path: /logout
+      jwt_verification_cache_ignore: false
+      use_nonce: false
+      unauth_action: auth
+      client_secret: << string::OpenId client secret::^[a-Z0-9\//-_]{152}$::null >>
+      token_endpoint_auth_method: client_secret_basic
+      use_pkce: false
+      set_access_token_header: true
+      access_token_in_authorization_header: false
+      set_id_token_header: true
+      set_userinfo_header: true
+      ssl_verify: false
+      scope: openid profile email mcp:read
+      jwks_uri: http://127.0.0.1:4444/.well-known/openid-configuration
+      client_jwt_assertion_expires_in: 60
+      renew_access_token_on_expiry: true
+      access_token_expires_leeway: 0
+      introspection_endpoint: http://127.0.0.1:4445/admin/oauth2/introspect
+      introspection_endpoint_auth_method: client_secret_basic
+      timeout: 3
+      discovery: http://127.0.0.1:4444/.well-known/openid-configuration
+      session:
+        secret: << string::Apisix session secret::^[a-Z0-9\//-_]{44}$::null >>
+      bearer_only: false
+      introspection_interval: 0
+      force_reauthorize: false
+      iat_slack: 120
+      accept_none_alg: false
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /mcp/(.*)
+        - /$1
+  id: mcp-sse-oauth
+  uris:
+    - /mcp/*
+    - /mcp
+  priority: 15000
+/apisix/routes/oauth-auth-server-mcp:
+  upstream_id: up_hydra_public
+  update_time: 1752388208
+  id: oauth-auth-server-mcp
+  create_time: 1752387225
+  uri: /.well-known/oauth-authorization-server/mcp/*
+  priority: 0
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /.well-known/oauth-authorization-server/mcp/(.*)
+        - /.well-known/openid-configuration
+  status: 1
+/apisix/routes/oauth-authorize:
+  id: oauth-authorize
+  priority: 12000
+  uri: /oauth/authorize
+  status: 1
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - /oauth/authorize
+        - /oauth2/auth
+      use_real_request_uri_unsafe: false
+  name: oauth-authorize
+  upstream_id: up_hydra_public
+/apisix/routes/oauth-consent:
+  status: 1
+  id: oauth-consent
+  create_time: 1751958795
+  update_time: 1751958795
+  name: oauth-login-ui-consent
+  enable_websocket: false
+  priority: 0
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /oauth/consent
+        - /consent
+  upstream:
+    pass_host: pass
+    scheme: http
+    nodes:
+      - weight: 0
+        port: 3100
+        priority: 0
+        host: 127.0.0.1
+    tls:
+      verify: false
+    type: roundrobin
+    hash_on: vars
+  uris:
+    - /oauth/consent
+    - /consent
+/apisix/routes/oauth-introspect:
+  upstream_id: up_hydra_public
+  id: oauth-introspect
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /oauth/introspect
+        - /oauth2/introspect
+  status: 1
+  create_time: 1752392939
+  update_time: 1752392939
+  priority: 0
+  uri: /oauth/introspect
+/apisix/routes/oauth-login:
+  upstream:
+    scheme: http
+    pass_host: pass
+    tls:
+      verify: false
+    type: roundrobin
+    hash_on: vars
+    nodes:
+      - host: 127.0.0.1
+        priority: 0
+        port: 3100
+        weight: 0
+  name: oauth-login-ui-login
+  status: 1
+  id: oauth-login
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /oauth/login
+        - /login
+  create_time: 1751820258
+  update_time: 1752458290
+  priority: 0
+  enable_websocket: false
+  uris:
+    - /oauth/login*
+    - /login*
+/apisix/routes/oauth-login-ui-css:
+  id: oauth-login-ui-css
+  enable_websocket: false
+  status: 1
+  priority: 0
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /static/(.+)
+        - /$1
+  name: Css oauth-login-ui
+  update_time: 1752694611
+  create_time: 1751958627
+  upstream:
+    nodes:
+      - weight: 0
+        port: 9280
+        priority: 0
+        host: 127.0.0.1
+    tls:
+      verify: false
+    pass_host: pass
+    scheme: http
+    hash_on: vars
+    type: roundrobin
+  uri: /static/css/*
+/apisix/routes/oauth-oauth2-auth-proxy:
+  uri: /oauth/oauth2/auth
+  filter_func: function(vars) return vars['arg_validate'] == nil end
+  update_time: 1752704625
+  name: oauth-oauth2-auth dynamic registration proxy
+  status: 1
+  priority: 0
+  id: oauth-oauth2-auth-proxy
+  create_time: 1751928195
+  upstream:
+    type: roundrobin
+    hash_on: vars
+    tls:
+      verify: false
+    scheme: http
+    nodes:
+      - port: 3100
+        weight: 0
+        host: 127.0.0.1
+        priority: 0
+    upstream_host: hydra
+    pass_host: rewrite
+  enable_websocket: false
+/apisix/routes/oauth-protected-resource-discovery:
+  id: oauth-protected-resource-discovery
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - .+
+        - /oauth/oauth-protected-resource-discovery.json
+      use_real_request_uri_unsafe: false
+  update_time: 1752706257
+  uri: /.well-known/oauth-protected-resource
+  create_time: 1752397397
+  upstream_id: '00000000000000000379'
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      - host: 127.0.0.1
+        port: 9280
+        weight: 0
+        priority: 1
+    type: roundrobin
+    pass_host: pass
+  status: 1
+  priority: 0
+/apisix/routes/oauth-protected-resource-mcp:
+  id: oauth-protected-resource-mcp
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - .+
+        - /oauth/oauth-protected-resource-mcp.json
+      use_real_request_uri_unsafe: false
+  create_time: 1752387244
+  upstream_id: '00000000000000000379'
+  update_time: 1752706278
+  status: 1
+  uri: /.well-known/oauth-protected-resource/mcp/*
+  priority: 0
+/apisix/routes/oauth-register:
+  uris:
+    - /register*
+    - /oauth/register*
+  status: 1
+  enable_websocket: false
+  name: oauth-register
+  create_time: 1751830596
+  priority: 0
+  id: oauth-register
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+        - ^(/oauth)?/register
+        - /admin/clients
+      use_real_request_uri_unsafe: false
+  upstream:
+    tls:
+      verify: false
+    pass_host: pass
+    nodes:
+      - priority: 0
+        port: 4445
+        host: 127.0.0.1
+        weight: 0
+    hash_on: vars
+    type: roundrobin
+    scheme: http
+  update_time: 1751910338
+/apisix/routes/oauth-token:
+  upstream_id: up_hydra_public
+  update_time: 1752388208
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /oauth/token
+        - /oauth2/token
+  id: oauth-token
+  uri: /oauth/token
+  status: 1
+  create_time: 1752388208
+  priority: 0
+/apisix/routes/oauth-userinfo:
+  upstream_id: up_hydra_public
+  update_time: 1752388208
+  id: oauth-userinfo
+  create_time: 1752388208
+  uri: /oauth/userinfo
+  priority: 0
+  plugins:
+    proxy-rewrite:
+      use_real_request_uri_unsafe: false
+      regex_uri:
+        - /oauth/userinfo
+        - /userinfo
+  status: 1
+/apisix/routes/oauth2-introspect:
+  create_time: 1752392139
+  upstream:
+    name: hydra admin
+    nodes:
+      - priority: 1
+        weight: 0
+        host: 127.0.0.1
+        port: 4445
+    scheme: http
+    hash_on: vars
+    pass_host: pass
+    type: roundrobin
+  id: oauth2-introspect
+  plugins:
+    proxy-rewrite:
+      uri: /admin/oauth2/introspect
+  uri: /oauth2/introspect
+/apisix/routes/userinfo:
+  upstream_id: up_hydra_public
+  id: userinfo
+  update_time: 1752388208
+  uri: /userinfo
+  create_time: 1752388208
+  status: 1
+  priority: 0
+/apisix/secrets/: init_dir
+/apisix/services/: init_dir
+/apisix/ssls/: init_dir
+/apisix/stream_routes/: init_dir
+/apisix/system/initial_import_done: '1'
+/apisix/upstreams/: init_dir
+/apisix/upstreams/00000000000000000379:
+  id: '00000000000000000379'
+  hash_on: vars
+  update_time: 1752705584
+  tls:
+    verify: false
+  name: Nginx static assets
+  create_time: 1752705515
+  scheme: http
+  nodes:
+    - host: 127.0.0.1
+      port: 9280
+      weight: 0
+      priority: 1
+  type: roundrobin
+  pass_host: pass
+/apisix/upstreams/up_hydra_public:
+  id: up_hydra_public
+  hash_on: vars
+  update_time: 1752705562
+  name: Hydra
+  create_time: 1751507443
+  scheme: http
+  nodes:
+    - host: 127.0.0.1
+      port: 4444
+      weight: 1
+      priority: 0
+  upstream_host: hydra
+  pass_host: rewrite
+  type: roundrobin

@@ -1,0 +1,242 @@
+## Ory Hydra Configuration
+
+
+db:
+  ignore_unknown_table_columns: false
+log:
+  level: panic
+  leak_sensitive_values: false
+  redaction_text: ""
+  format: json
+serve:
+  public:
+    port: 1
+    host: localhost
+    cors:
+      enabled: false
+      allowed_origins:
+        - "*"
+        - https://example.com
+        - https://*.example.com
+        - https://*.foo.example.com
+      allowed_methods:
+        - POST
+      allowed_headers:
+        - ""
+      exposed_headers:
+        - ""
+      allow_credentials: false
+      max_age: 0
+      debug: false
+    socket:
+      owner: ""
+      group: ""
+      mode: 0
+    request_log:
+      disable_for_health: false
+    tls:
+      enabled: false
+      key:
+        path: /path/to/file.pem
+      cert:
+        path: /path/to/file.pem
+      allow_termination_from:
+        - 127.0.0.1/32
+  admin:
+    port: 1
+    host: localhost
+    cors:
+      enabled: false
+      allowed_origins:
+        - "*"
+        - https://example.com
+        - https://*.example.com
+        - https://*.foo.example.com
+      allowed_methods:
+        - POST
+      allowed_headers:
+        - ""
+      exposed_headers:
+        - ""
+      allow_credentials: false
+      max_age: 0
+      debug: false
+    socket:
+      owner: ""
+      group: ""
+      mode: 0
+    request_log:
+      disable_for_health: false
+    tls:
+      enabled: false
+      key:
+        path: /path/to/file.pem
+      cert:
+        path: /path/to/file.pem
+      allow_termination_from:
+        - 127.0.0.1/32
+  tls:
+    enabled: false
+    key:
+      path: /path/to/file.pem
+    cert:
+      path: /path/to/file.pem
+    allow_termination_from:
+      - 127.0.0.1/32
+  cookies:
+    same_site_mode: Strict
+    same_site_legacy_workaround: true
+    domain: ""
+    secure: false
+    names:
+      device_csrf: ""
+      login_csrf: ""
+      consent_csrf: ""
+      session: ""
+    paths:
+      session: ""
+dsn: ""
+clients:
+  http:
+    disallow_private_ip_ranges: false
+    private_ip_exception_urls:
+      - http://a.aaa
+hsm:
+  enabled: false
+  library: ""
+  pin: ""
+  slot: -100000000
+  token_label: ""
+  key_set_prefix: ""
+webfinger:
+  jwks:
+    broadcast_keys: hydra.jwt.access-token
+  oidc_discovery:
+    jwks_url: https://my-service.com/.well-known/jwks.json
+    token_url: https://my-service.com/oauth2/token
+    auth_url: https://my-service.com/oauth2/auth
+    device_authorization_url: https://my-service.com/oauth2/device/auth
+    client_registration_url: https://my-service.com/clients
+    supported_claims:
+      - email
+      - username
+    supported_scope:
+      - email
+      - whatever
+      - read.photos
+    userinfo_url: https://example.org/my-custom-userinfo-endpoint
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+      - pairwise
+    pairwise:
+      salt: some-random-salt
+  dynamic_client_registration:
+    enabled: false
+    default_scope:
+      - openid
+      - offline
+      - offline_access
+urls:
+  self:
+    issuer: https://localhost:4444/
+    public: https://localhost:4444/
+    admin: https://localhost:4445/
+  login: https://my-login.app/login
+  registration: https://my-login.app/registration
+  consent: https://my-consent.app/consent
+  logout: https://my-logout.app/logout
+  device:
+    verification: https://my-logout.app/device_verification
+    success: https://my-logout.app/device_done
+  error: https://my-error.app/error
+  post_logout_redirect: https://my-example.app/logout-successful
+  identity_provider:
+    url: https://kratos.example.com/admin
+    publicUrl: https://kratos.example.com/public
+    headers:
+      Authorization: Bearer some-token
+strategies:
+  scope: exact
+  access_token: opaque
+  jwt:
+    scope_claim: list
+ttl:
+  login_consent_request: 1h
+  access_token: 1h
+  refresh_token: 1h
+  id_token: 1h
+  auth_code: 1h
+  device_user_code: 1h
+oauth2:
+  expose_internal_errors: true
+  session:
+    encrypt_at_rest: false
+  exclude_not_before_claim: true
+  allowed_top_level_claims:
+    - username
+    - email
+    - user_uuid
+  mirror_top_level_claims: false
+  hashers:
+    algorithm: pbkdf2
+    bcrypt:
+      cost: 4
+    pbkdf2:
+      iterations: 1
+  pkce:
+    enforced: true
+    enforced_for_public_clients: true
+  client_credentials:
+    default_grant_allowed_scope: false
+  grant:
+    refresh_token:
+      rotation_grace_period: 1h
+    jwt:
+      jti_optional: false
+      iat_optional: false
+      max_ttl: 1h
+  refresh_token_hook: https://my-example.app/token-refresh-hook
+  device_authorization:
+    token_polling_interval: 5s
+    user_code_entropy: high
+  token_hook: https://my-example.app/token-hook
+secrets:
+  system:
+    - this-is-the-primary-secret
+    - this-is-an-old-secret
+    - this-is-another-old-secret
+  cookie:
+    - this-is-the-primary-secret
+    - this-is-an-old-secret
+    - this-is-another-old-secret
+profiling: cpu
+tracing:
+  provider: jaeger
+  service_name: Ory Hydra
+  deployment_environment: development
+  providers:
+    jaeger:
+      local_agent_address: 127.0.0.1:6831
+      sampling:
+        server_url: http://localhost:5778/sampling
+        trace_id_ratio: 0.5
+    zipkin:
+      server_url: http://localhost:9411/api/v2/spans
+      sampling:
+        sampling_ratio: 0.4
+    otlp:
+      server_url: localhost:4318
+      insecure: false
+      sampling:
+        sampling_ratio: 0.4
+      authorization_header: Bearer 2389s8fs9d8fus9f
+sqa:
+  opt_out: true
+version: v0.0.0
+cgroups:
+  v1:
+    auto_max_procs_enabled: true
+dev: false
+feature_flags: {}
