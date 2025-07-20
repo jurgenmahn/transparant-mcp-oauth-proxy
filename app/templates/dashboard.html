@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Configuration Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .section { border: 1px solid #ddd; margin-bottom: 20px; border-radius: 8px; }
+        .section-header { background: #f5f5f5; padding: 15px; font-weight: bold; border-radius: 8px 8px 0 0; }
+        .section-content { padding: 20px; }
+        .field-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        textarea { height: 100px; }
+        .array-input { margin-bottom: 5px; }
+        .add-array-item { background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        .submit-btn { background: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .submit-btn:hover { background: #218838; }
+        .general-section { background: #e8f4f8; }
+        .auth-form { max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .auth-form input { margin-bottom: 10px; }
+        .error { color: red; margin: 10px 0; }
+        .success { color: green; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>MCP Configuration Dashboard</h1>
+    
+    <!-- Authentication Form (shown when not authenticated) -->
+    <div id="auth-section" style="display: none;">
+        <div class="auth-form">
+            <h2>Login</h2>
+            <form id="login-form">
+                <input type="email" id="email" placeholder="Email" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit" class="submit-btn">Login</button>
+            </form>
+            <div id="auth-error" class="error" style="display: none;"></div>
+        </div>
+    </div>
+    
+    <!-- Configuration Form (shown when authenticated) -->
+    <div id="config-section" style="display: none;">
+        <form id="config-form">
+            {{FORM_CONTENT}}
+            <button type="submit" class="submit-btn">Save Configuration</button>
+        </form>
+        <div id="save-message" class="success" style="display: none;"></div>
+        <div id="save-error" class="error" style="display: none;"></div>
+    </div>
+    
+    <script>
+        let isAuthenticated = false;
+        
+        // Check authentication status
+        function checkAuth() {
+            // For now, show config section directly
+            // In production, you'd check a session/token
+            document.getElementById('config-section').style.display = 'block';
+        }
+        
+        // Handle login
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch('/dashboard/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                if (response.ok) {
+                    isAuthenticated = true;
+                    document.getElementById('auth-section').style.display = 'none';
+                    document.getElementById('config-section').style.display = 'block';
+                } else {
+                    const error = await response.json();
+                    document.getElementById('auth-error').textContent = error.error;
+                    document.getElementById('auth-error').style.display = 'block';
+                }
+            } catch (error) {
+                document.getElementById('auth-error').textContent = 'Connection error';
+                document.getElementById('auth-error').style.display = 'block';
+            }
+        });
+        
+        // Handle config save
+        document.getElementById('config-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/dashboard/save-config', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    document.getElementById('save-message').textContent = 'Configuration saved successfully!';
+                    document.getElementById('save-message').style.display = 'block';
+                    document.getElementById('save-error').style.display = 'none';
+                } else {
+                    const error = await response.json();
+                    document.getElementById('save-error').textContent = error.error || 'Failed to save configuration';
+                    document.getElementById('save-error').style.display = 'block';
+                    document.getElementById('save-message').style.display = 'none';
+                }
+            } catch (error) {
+                document.getElementById('save-error').textContent = 'Connection error';
+                document.getElementById('save-error').style.display = 'block';
+            }
+        });
+        
+        // Add array item function
+        function addArrayItem(fieldName) {
+            const container = document.getElementById(fieldName + '_container');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.name = fieldName + '[]';
+            input.className = 'array-input';
+            input.placeholder = 'Enter value';
+            container.appendChild(input);
+        }
+        
+        // Initialize
+        checkAuth();
+    </script>
+</body>
+</html>

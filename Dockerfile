@@ -48,7 +48,8 @@ RUN export NVM_DIR="/nvm" && \
 COPY ./app/config ./config
 COPY ./app/public ./public
 COPY ./app/templates ./templates
-COPY ./app/mcp-*.js ./
+COPY ./app/server.js ./
+COPY ./app/services ./services
 COPY ./static /static
 
 FROM root AS base

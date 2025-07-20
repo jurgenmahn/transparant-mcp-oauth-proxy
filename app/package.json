@@ -4,9 +4,8 @@
   "type": "module",
   "description": "Full MCP bridge to existing services",
   "scripts": {
-    "start-launcher-proxy": "node mcp-launcher-proxy.js",
-    "start-oauth-proxy": "node mcp-oauth-proxy.js",
-    "dev": "concurrently \"node mcp-oauth-proxy.js\" \"node mcp-launcher-proxy.js\""
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
     "@bytebase/dbhub": "latest",
