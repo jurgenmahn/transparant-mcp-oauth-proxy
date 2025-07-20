@@ -49,7 +49,7 @@
     proxy-rewrite:
       regex_uri:
         - /authorize
-        - /oauth2/auth
+        - /oauth/oauth2/auth
   name: hydra-authorize
   upstream_id: up_hydra_public
 /apisix/routes/hydra-public:
@@ -167,7 +167,7 @@
     proxy-rewrite:
       regex_uri:
         - /oauth/authorize
-        - /oauth2/auth
+        - /oauth/oauth2/auth
       use_real_request_uri_unsafe: false
   name: oauth-authorize
   upstream_id: up_hydra_public
@@ -190,7 +190,7 @@
     scheme: http
     nodes:
       - weight: 0
-        port: 3100
+        port: 3000
         priority: 0
         host: 127.0.0.1
     tls:
@@ -225,7 +225,7 @@
     nodes:
       - host: 127.0.0.1
         priority: 0
-        port: 3100
+        port: 3000
         weight: 0
   name: oauth-login-ui-login
   status: 1
@@ -272,7 +272,7 @@
   uri: /static/css/*
 /apisix/routes/oauth-oauth2-auth-proxy:
   uri: /oauth/oauth2/auth
-  filter_func: function(vars) return vars['arg_validate'] == nil end
+  filter_func: function(vars) return vars["arg_validate"] == nil end
   update_time: 1752704625
   name: oauth-oauth2-auth dynamic registration proxy
   status: 1
@@ -286,11 +286,11 @@
       verify: false
     scheme: http
     nodes:
-      - port: 3100
+      - port: 3000
         weight: 0
         host: 127.0.0.1
         priority: 0
-    upstream_host: hydra
+    upstream_host: 127.0.0.1
     pass_host: rewrite
   enable_websocket: false
 /apisix/routes/oauth-protected-resource-discovery:
@@ -448,6 +448,6 @@
       port: 4444
       weight: 1
       priority: 0
-  upstream_host: hydra
+  upstream_host: 127.0.0.1
   pass_host: rewrite
   type: roundrobin

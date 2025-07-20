@@ -1,9 +1,45 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 import { spawn } from "child_process";
 import express from "express";
 import fs from "fs";
 import YAML from "yaml";
+
+// Debug logging utility (from original)
+class DebugLogger {
+    static log(category, message, data = null) {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [${category}] ${message}`);
+        if (data) {
+            console.log(`[${timestamp}] [${category}] Data:`, JSON.stringify(data, null, 2));
+        }
+    }
+
+    static logHttpRequest(req) {
+        this.log('HTTP_IN', `${req.method} ${req.url}`, {
+            headers: req.headers,
+            body: req.body,
+            query: req.query,
+            params: req.params
+        });
+    }
+
+    static logHttpResponse(res, body) {
+        this.log('HTTP_OUT', `Response ${res.statusCode}`, {
+            headers: res.getHeaders(),
+            body: body
+        });
+    }
+
+    static logMCPRequest(serviceName, request) {
+        this.log('MCP_OUT', `→ ${serviceName}`, request);
+    }
+
+    static logMCPResponse(serviceName, response) {
+        this.log('MCP_IN', `← ${serviceName}`, response);
+    }
+}
 
 export class LauncherProxyService {
     constructor() {
@@ -14,6 +50,10 @@ export class LauncherProxyService {
         this.services = new Map();
         this.server = null;
         this.childProcesses = [];
+        this.processes = new Map(); // Add processes map like original
+        this.pendingRequests = new Map(); // Add pending requests management
+        this.requestIdCounter = 1; // Add request ID counter
+        this.registeredTools = new Set(); // Track registered tools
         
         this.setupRoutes();
     }
@@ -134,6 +174,74 @@ export class LauncherProxyService {
         return parts;
     }
     
+    // Convert JSON Schema to Zod schema dynamically (from original)
+    convertToZodSchema(inputSchema) {
+        if (!inputSchema || !inputSchema.properties) {
+            return {};
+        }
+
+        const zodFields = {};
+        
+        for (const [fieldName, fieldSchema] of Object.entries(inputSchema.properties)) {
+            let zodField;
+            
+            switch (fieldSchema.type) {
+                case 'string':
+                    zodField = z.string();
+                    break;
+                case 'number':
+                    zodField = z.number();
+                    break;
+                case 'integer':
+                    zodField = z.number().int();
+                    break;
+                case 'boolean':
+                    zodField = z.boolean();
+                    break;
+                case 'array':
+                    if (fieldSchema.items?.type === 'string') {
+                        zodField = z.array(z.string());
+                    } else if (fieldSchema.items?.type === 'object') {
+                        zodField = z.array(z.any());
+                    } else {
+                        zodField = z.array(z.any());
+                    }
+                    break;
+                case 'object':
+                    zodField = z.any(); // For complex objects, just accept any
+                    break;
+                default:
+                    zodField = z.any();
+            }
+            
+            // Add description if available
+            if (fieldSchema.description) {
+                zodField = zodField.describe(fieldSchema.description);
+            }
+            
+            // Make optional if not required
+            if (!inputSchema.required || !inputSchema.required.includes(fieldName)) {
+                zodField = zodField.optional();
+            }
+            
+            zodFields[fieldName] = zodField;
+        }
+        
+        return zodFields;
+    }
+    
+    // Wait for response with timeout (from original)
+    async waitForResponse(requestId, timeoutMs = 15000) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingRequests.delete(requestId);
+                reject(new Error(`Request ${requestId} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            this.pendingRequests.set(requestId, { resolve, reject, timeout });
+        });
+    }
+    
     // Start child service process
     async startChildService(serviceName, serviceConfig) {
         return new Promise((resolve, reject) => {
@@ -165,10 +273,16 @@ export class LauncherProxyService {
                     config: serviceConfig
                 });
                 
-                // Give the service time to start
-                setTimeout(() => {
-                    LauncherProxyService.log('SERVICE_READY', `Service ${serviceName} ready`);
-                    resolve();
+                // Give the service time to start, then initialize MCP protocol
+                setTimeout(async () => {
+                    try {
+                        await this.initializeMCPService(serviceName, child);
+                        DebugLogger.log('SERVICE_READY', `Service ${serviceName} ready`);
+                        resolve();
+                    } catch (error) {
+                        DebugLogger.log('SERVICE_INIT_ERROR', `Failed to initialize ${serviceName}: ${error.message}`);
+                        reject(error);
+                    }
                 }, 1000);
                 
             } catch (error) {
@@ -176,6 +290,107 @@ export class LauncherProxyService {
                 reject(error);
             }
         });
+    }
+    
+    // Initialize MCP service with proper handshake (from original)
+    async initializeMCPService(serviceName, childProcess) {
+        const service = this.services.get(serviceName);
+        if (!service) return;
+
+        // Store process in processes map for compatibility
+        this.processes.set(serviceName, {
+            proc: childProcess,
+            responseBuffer: '',
+            initialized: false,
+            tools: [],
+            serviceName
+        });
+
+        const processInfo = this.processes.get(serviceName);
+
+        // Set up output processing
+        childProcess.stdout.on('data', (data) => {
+            processInfo.responseBuffer += data.toString();
+            this.processServiceOutput(serviceName);
+        });
+
+        try {
+            // Send initialize request
+            const initRequest = {
+                jsonrpc: "2.0",
+                id: this.requestIdCounter++,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-03-26",
+                    capabilities: {},
+                    clientInfo: {
+                        name: "dynamic-mcp-bridge",
+                        version: "1.0.0"
+                    }
+                }
+            };
+
+            DebugLogger.logMCPRequest(serviceName, initRequest);
+            childProcess.stdin.write(JSON.stringify(initRequest) + '\n');
+            await this.waitForResponse(initRequest.id);
+
+            // Send tools/list request
+            const toolsRequest = {
+                jsonrpc: "2.0",
+                id: this.requestIdCounter++,
+                method: "tools/list",
+                params: {}
+            };
+
+            DebugLogger.logMCPRequest(serviceName, toolsRequest);
+            childProcess.stdin.write(JSON.stringify(toolsRequest) + '\n');
+            const toolsResponse = await this.waitForResponse(toolsRequest.id);
+
+            if (toolsResponse && toolsResponse.result && toolsResponse.result.tools) {
+                processInfo.tools = toolsResponse.result.tools;
+                processInfo.initialized = true;
+                console.log(`✅ ${serviceName} initialized with ${processInfo.tools.length} tools`);
+                
+                // Track tools
+                for (const tool of processInfo.tools) {
+                    const toolName = `${serviceName}_${tool.name}`;
+                    this.registeredTools.add(toolName);
+                }
+            } else {
+                console.log(`⚠️  ${serviceName} initialized but no tools found`);
+            }
+        } catch (error) {
+            console.error(`❌ Failed to initialize ${serviceName}:`, error.message);
+            throw error;
+        }
+    }
+    
+    // Process service output (from original)
+    processServiceOutput(serviceName) {
+        const service = this.processes.get(serviceName);
+        if (!service) return;
+
+        const lines = service.responseBuffer.split('\n');
+        service.responseBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+            if (!line.trim()) continue;
+
+            try {
+                const response = JSON.parse(line);
+                DebugLogger.logMCPResponse(serviceName, response);
+                
+                // Handle pending requests
+                if (response.id && this.pendingRequests.has(response.id)) {
+                    const pending = this.pendingRequests.get(response.id);
+                    clearTimeout(pending.timeout);
+                    pending.resolve(response);
+                    this.pendingRequests.delete(response.id);
+                }
+            } catch (error) {
+                // Not JSON, ignore
+            }
+        }
     }
     
     // Discover and register tools from all services
@@ -360,6 +575,42 @@ export class LauncherProxyService {
             req.on('close', () => {
                 LauncherProxyService.log('HTTP_OUT', 'SSE connection closed');
             });
+        });
+        
+        // MCP Protocol endpoints (from original)
+        this.apiRouter.post('/message', async (req, res) => {
+            console.log('MCP message request received:', req.body);
+            try {
+                const transport = new StreamableHTTPServerTransport(res);
+                this.server.connect(transport);
+                // Don't set headers here - StreamableHTTPServerTransport will handle them
+                await transport.handleRequest(req, res, req.body);
+            } catch (error) {
+                console.error('MCP message error:', error);
+                // Only set error response if headers haven't been sent yet
+                if (!res.headersSent) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: error.message }));
+                }
+            }
+        });
+        
+        // Also handle root route for MCP (from original)
+        this.apiRouter.post('/', async (req, res) => {
+            console.log('MCP root request received:', req.body);
+            try {
+                const transport = new StreamableHTTPServerTransport(res);
+                this.server.connect(transport);
+                // Don't set headers here - StreamableHTTPServerTransport will handle them
+                await transport.handleRequest(req, res, req.body);
+            } catch (error) {
+                console.error('MCP root error:', error);
+                // Only set error response if headers haven't been sent yet
+                if (!res.headersSent) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: error.message }));
+                }
+            }
         });
         
         // API endpoints

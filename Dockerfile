@@ -45,10 +45,11 @@ RUN export NVM_DIR="/nvm" && \
     echo "PATH=/nvm/versions/node/$(node --version)/bin" >> /.buildvars-nodejs-builder && \
     echo "NODE_PATH=/nvm/versions/node/$(node --version)/lib/node_modules" >> /.buildvars-nodejs-builder
 
+FROM nodejs-builder AS nodejs-app
+WORKDIR /node-apps
 COPY ./app/config ./config
-COPY ./app/public ./public
 COPY ./app/templates ./templates
-COPY ./app/server.js ./
+COPY ./app/server.js ./server.js
 COPY ./app/services ./services
 COPY ./static /static
 
@@ -62,7 +63,11 @@ COPY --from=apisix /.buildvars-apisix /.buildvars-apisix
 COPY --from=nodejs-builder /nvm /nvm
 COPY --from=nodejs-builder /node-apps /node-apps
 COPY --from=nodejs-builder /.buildvars-nodejs-builder /.buildvars-nodejs-builder 
-COPY --from=nodejs-builder /static /static
+COPY --from=nodejs-app /node-apps/server.js /node-apps/server.js
+COPY --from=nodejs-app /node-apps/services /node-apps/services
+COPY --from=nodejs-app /node-apps/config /node-apps/config
+COPY --from=nodejs-app /node-apps/templates /node-apps/templates
+COPY --from=nodejs-app /static /static
 COPY ./conf/ /
 
 # Setup folders and symlinks, collect all data which should be copied to volumes on runtime and apply nmp env vars
