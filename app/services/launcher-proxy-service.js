@@ -594,48 +594,24 @@ export class LauncherProxyService {
         // Register all tools from all services (cached registration - no verbose logging)
         this.registerAllToolsCached(server);
         
-        // Add resources handler with template support
-        server.resource("mcp://{serviceName}/", "Service-specific resources", "application/json", async (uri) => {
-            const match = uri.match(/^mcp:\/\/([^\/]+)\//);
-            if (!match) {
-                throw new Error("Invalid resource URI");
+        // Add specific resources for each service dynamically
+        for (const [serviceName, service] of this.processes) {
+            if (service.initialized) {
+                server.resource(`mcp://${serviceName}/`, `${serviceName} service resources`, "application/json", async (uri) => {
+                    return {
+                        uri: uri,
+                        name: `${serviceName} Service Resource`,
+                        description: `Data from ${serviceName} service`,
+                        content: JSON.stringify({
+                            serviceName: serviceName,
+                            tools: service.tools.map(t => ({ name: t.name, description: t.description })),
+                            status: "initialized",
+                            timestamp: new Date().toISOString()
+                        }, null, 2)
+                    };
+                });
             }
-            
-            const serviceName = match[1];
-            const service = this.processes.get(serviceName);
-            
-            if (!service || !service.initialized) {
-                throw new Error(`Service ${serviceName} not available`);
-            }
-            
-            return {
-                uri: uri,
-                name: `${serviceName} Service Resource`,
-                description: `Data from ${serviceName} service`,
-                content: JSON.stringify({
-                    serviceName: serviceName,
-                    tools: service.tools.map(t => ({ name: t.name, description: t.description })),
-                    status: "initialized",
-                    timestamp: new Date().toISOString()
-                }, null, 2)
-            };
-        });
-        
-        // Add general resources handler
-        server.resource("*", "List all available resources", "application/json", async () => {
-            const resources = [];
-            for (const [serviceName, service] of this.processes) {
-                if (service.initialized) {
-                    resources.push({
-                        uri: `mcp://${serviceName}/`,
-                        name: `${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)} Service`,
-                        description: `Resources from ${serviceName} service`,
-                        mimeType: "application/json"
-                    });
-                }
-            }
-            return resources;
-        });
+        }
         
         // Add prompts handler with argument support
         server.prompt("help", "Get help for a specific service", {
@@ -695,58 +671,9 @@ export class LauncherProxyService {
             return prompts;
         });
         
-        // Add completion handler for auto-completion
-        server.setCompletion(async (ref, argument) => {
-            if (ref.type === "resource" && ref.uri.startsWith("mcp://")) {
-                // Auto-complete service names
-                const services = Array.from(this.processes.keys()).filter(name => 
-                    this.processes.get(name).initialized
-                );
-                return {
-                    completion: {
-                        values: services.map(service => ({
-                            value: service,
-                            label: `${service} service`,
-                            description: `Resources from ${service}`
-                        }))
-                    }
-                };
-            }
-            
-            if (ref.type === "prompt" && argument === "service") {
-                // Auto-complete service names for help prompt
-                const services = Array.from(this.processes.keys()).filter(name => 
-                    this.processes.get(name).initialized
-                );
-                return {
-                    completion: {
-                        values: services.map(service => ({
-                            value: service,
-                            label: service,
-                            description: `${service} service`
-                        }))
-                    }
-                };
-            }
-            
-            return { completion: { values: [] } };
-        });
-        
-        // Add roots handler for workspace discovery
-        server.setRoots(async () => {
-            return [
-                {
-                    uri: "file:///workspace",
-                    name: "MCP Workspace",
-                    description: "Main workspace for MCP services"
-                },
-                {
-                    uri: `mcp://services/`,
-                    name: "MCP Services",
-                    description: "Available MCP services and their resources"
-                }
-            ];
-        });
+        // Note: Advanced handlers like completion and roots would need to be implemented
+        // using server.server.setRequestHandler() with appropriate schemas, but are
+        // not essential for basic MCP functionality
         
         // No cleanup needed for persistent server
         

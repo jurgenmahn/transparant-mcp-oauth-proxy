@@ -193,6 +193,7 @@ class MCPServer {
         this.app.use('/consent', this.services.oauthProxy.getConsentRouter());
         this.app.use('/oauth', this.services.oauthProxy.getRouter());
         
+        
         // Launcher Proxy routes - Mount only at root to handle both /message and / 
         this.app.use("/", this.services.launcherProxy.getRouter());
 
