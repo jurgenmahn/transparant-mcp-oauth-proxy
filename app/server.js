@@ -43,7 +43,19 @@ class MCPServer {
         // Handle CORS and security headers
         this.app.use((req, res, next) => {
             const origin = req.headers.origin;
-            res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
+            const allowedOrigins = this.config.cors?.allowed_origins || [];
+            
+            // Only set CORS origin if it's in the allowed list
+            if (allowedOrigins.includes(origin)) {
+                res.setHeader('Access-Control-Allow-Origin', origin);
+            } else if (allowedOrigins.length > 0) {
+                // If no matching origin but we have allowed origins, use the first one
+                res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
+            } else {
+                // Fallback if no config is available
+                res.setHeader('Access-Control-Allow-Origin', 'http://localhost');
+            }
+            
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
             res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
             res.setHeader('Access-Control-Allow-Credentials', 'true');

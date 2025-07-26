@@ -325,68 +325,8 @@ export class UnifiedOAuthService {
             return res.end('Invalid scope requested: ' + scope);
         }
 
-        const safeScope = (scope || 'openid')
-            .split(/\s+/)
-            .filter(s => this.config.oauth.allowed_scopes.includes(s))
-            .join(' ') || 'openid';
-
-        const clientPayload = {
-            client_id,
-            client_name: 'MCP OAuth Proxy Client',
-            client_secret: this.config.oauth.client_secret,
-            redirect_uris: [redirect_uri],
-            scope: safeScope,
-            grant_types: ['authorization_code', 'refresh_token'],
-            response_types: ['code'],
-            token_endpoint_auth_method: 'client_secret_post'
-        };
-
-
-        try {
-
-            let data;
-            await this.getClient(client_id).then(async (response) => {
-
-                data = await response.body.text();
-                console.log("Check if client already exist, response: ", data, " status code: ", response.statusCode);
-
-                if (response.statusCode === 404) {
-
-                    console.log('[OAUTH] Registering client with payload:', clientPayload);
-
-                    // Use POST to create the client
-
-                    const registerResponse = await request(
-                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Host': this.config.hydra.hostname },
-                            body: JSON.stringify(clientPayload)
-                        }
-                    );
-                    const registerBody = await registerResponse.body.text();
-                    console.log(`[OAUTH] Registration response: ${registerResponse.statusCode} - ${registerBody}`);
-
-                    if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
-                        console.log('Client created successfully:', client_id);
-                    } else {
-                        const errorBody = await registerResponse.body.text();
-                        console.error('Failed to create client:', registerResponse.statusCode, errorBody);
-                        res.writeHead(500, { 'Content-Type': 'text/plain' });
-                        return res.end('Failed to configure OAuth client');
-                    }
-
-                } else if (response.statusCode >= 500) {
-                    console.error('Hydra server error:', data);
-                    return res.status(500).send('Hydra server error');
-                }
-            });
-
-        } catch (regError) {
-            console.error('Error creating/updating client:', regError);
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            return res.end('Error during client configuration url: ' + `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients/${client_id}` + " payload: " + JSON.stringify(clientPayload));
-        }
+        // Client must already be registered via /oauth/register endpoint
+        // Auth endpoint only handles authorization flow (login/consent)
 
         // Store state if provided (for CSRF protection)
         if (state) {
@@ -456,6 +396,118 @@ export class UnifiedOAuthService {
         }
     };
 
+    // OAuth2 Client Registration endpoint handler
+    handleOAuth2Register = async (req, res) => {
+        const {
+            client_id,
+            client_name,
+            client_secret,
+            redirect_uris,
+            scope,
+            grant_types,
+            response_types,
+            token_endpoint_auth_method
+        } = req.body;
+
+        console.log(`[OAUTH] Client registration request: client_id=${client_id}, client_name=${client_name}`);
+
+        // Basic parameter validation
+        if (!client_id || !client_secret || !redirect_uris) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'Missing required parameters: client_id, client_secret, redirect_uris' }));
+        }
+
+        // Validate redirect URIs
+        const redirectUriArray = Array.isArray(redirect_uris) ? redirect_uris : [redirect_uris];
+        for (const redirectUri of redirectUriArray) {
+            const isValidRedirectUri = await this.validateRedirectUri(redirectUri, this.config.oauth.allowed_redirect_domains);
+            if (!isValidRedirectUri) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: `Invalid redirect URI domain: ${redirectUri}` }));
+            }
+        }
+
+        // Validate scopes
+        const clientScope = scope || 'openid';
+        const isValidScope = this.validateScopes(clientScope, this.config.oauth.allowed_scopes);
+        if (!isValidScope) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: `Invalid scope requested: ${clientScope}` }));
+        }
+
+        const safeScope = clientScope
+            .split(/\s+/)
+            .filter(s => this.config.oauth.allowed_scopes.includes(s))
+            .join(' ') || 'openid';
+
+        const clientPayload = {
+            client_id,
+            client_name: client_name || 'OAuth Client',
+            client_secret,
+            redirect_uris: redirectUriArray,
+            scope: safeScope,
+            grant_types: grant_types || ['authorization_code', 'refresh_token'],
+            response_types: response_types || ['code'],
+            token_endpoint_auth_method: token_endpoint_auth_method || 'client_secret_post'
+        };
+
+        try {
+            let data;
+            await this.getClient(client_id).then(async (response) => {
+                data = await response.body.text();
+                console.log("Check if client already exist, response: ", data, " status code: ", response.statusCode);
+
+                if (response.statusCode === 404) {
+                    console.log('[OAUTH] Registering client with payload:', clientPayload);
+
+                    // Use POST to create the client
+                    const registerResponse = await request(
+                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Host': this.config.hydra.hostname },
+                            body: JSON.stringify(clientPayload)
+                        }
+                    );
+                    const registerBody = await registerResponse.body.text();
+                    console.log(`[OAUTH] Registration response: ${registerResponse.statusCode} - ${registerBody}`);
+
+                    if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
+                        console.log('Client created successfully:', client_id);
+                        res.writeHead(201, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({ 
+                            message: 'Client registered successfully', 
+                            client_id: client_id,
+                            client_name: clientPayload.client_name
+                        }));
+                    } else {
+                        console.error('Failed to create client:', registerResponse.statusCode, registerBody);
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({ error: 'Failed to register OAuth client', details: registerBody }));
+                    }
+
+                } else if (response.statusCode >= 200 && response.statusCode < 300) {
+                    // Client already exists
+                    res.writeHead(409, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Client already exists', client_id: client_id }));
+                } else if (response.statusCode >= 500) {
+                    console.error('Hydra server error:', data);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Hydra server error', details: data }));
+                }
+            });
+
+        } catch (regError) {
+            console.error('Error creating/updating client:', regError);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ 
+                error: 'Error during client registration', 
+                details: regError.message,
+                url: `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`
+            }));
+        }
+    };
+
     // Get client from Hydra
     async getClient(clientId) {
         try {
@@ -477,6 +529,23 @@ export class UnifiedOAuthService {
         // OAuth2 Authorization endpoint
         this.router.get('/oauth2/auth', this.handleOAuth2Auth);
         this.router.get('/authorize', this.handleOAuth2Auth);  // APISIX compatibility
+
+        // OAuth2 Client Registration endpoint
+        this.router.post('/oauth/register', this.handleOAuth2Register);
+
+        // OAuth2 Issuer endpoint - OpenID Connect Discovery
+        this.router.get('/oauth', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in oauth issuer endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch OAuth issuer configuration' }));
+            }
+        });
 
         // OAuth2 Token endpoint - proxy to Hydra
         this.router.post('/oauth2/token', async (req, res) => {
@@ -511,6 +580,20 @@ export class UnifiedOAuthService {
                 console.error('Error in well-known endpoint:', error);
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Failed to fetch OpenID configuration' }));
+            }
+        });
+
+        // JWKS endpoint - proxy to Hydra
+        this.router.get('/.well-known/jwks.json', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/jwks.json`);
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in jwks endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch JWKS' }));
             }
         });
 
