@@ -1,12 +1,23 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
-import { spawn } from "child_process";
+// mcp-bridge-server.js - Dynamic MCP bridge with auto tool discovery
+import {
+    McpServer
+} from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+    StdioServerTransport
+} from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+    StreamableHTTPServerTransport
+} from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+    z
+} from "zod";
+import {
+    spawn
+} from "child_process";
 import express from "express";
 import fs from "fs";
 import YAML from "yaml";
-
-// Debug logging utility (from original)
+// Debug logging utility
 class DebugLogger {
     static log(category, message, data = null) {
         const timestamp = new Date().toISOString();
@@ -42,149 +53,250 @@ class DebugLogger {
 }
 
 export class LauncherProxyService {
-    constructor() {
-        this.sseRouter = express.Router();
-        this.apiRouter = express.Router();
-        this.mainRouter = express.Router();
+    constructor(appPath) {
+        this.appPath = appPath;
+        this.router = express.Router();
         this.config = {};
-        this.services = new Map();
-        this.server = null;
-        this.childProcesses = [];
-        this.processes = new Map(); // Add processes map like original
-        this.pendingRequests = new Map(); // Add pending requests management
-        this.requestIdCounter = 1; // Add request ID counter
-        this.registeredTools = new Set(); // Track registered tools
-        
+        this.processes = new Map();
+        this.pendingRequests = new Map();
+        this.requestIdCounter = 1;
+        this.registeredTools = new Set(); // Track registered tools to prevent duplicates
         this.setupRoutes();
     }
-    
+
     async initialize() {
         await this.loadConfig();
         await this.initializeMCPServer();
         console.log('Launcher Proxy Service initialized');
     }
-    
+
     async loadConfig() {
         try {
-            this.config = YAML.parse(fs.readFileSync('./config/local.yaml', 'utf-8'));
+            this.config = YAML.parse(fs.readFileSync(this.appPath + '/config/local.yaml', 'utf-8'));
         } catch (error) {
             console.error('Error loading launcher proxy config:', error);
             throw error;
         }
     }
-    
+
     async initializeMCPServer() {
-        // Create MCP server instance
-        this.server = new McpServer({
-            name: "mcp-launcher-proxy",
-            version: "1.0.0"
-        });
-        
+
         // Parse services configuration
-        const services = this.parseServices(this.config.mcp_services || []);
-        
-        // Initialize child processes for each service
-        for (const [serviceName, serviceConfig] of Object.entries(services)) {
-            await this.startChildService(serviceName, serviceConfig);
-        }
-        
-        // Dynamic tool discovery and registration
-        await this.discoverAndRegisterTools();
-        
-        console.log(`MCP Launcher Proxy initialized with ${this.services.size} services`);
+        this.services = await this.parseServices(this.config.mcp_services || []);
+
+        const mcpServerNames = Object.values(this.services).map(service => service.name).join(", ");
+        console.log("MCP servers loaded from configuration: ", mcpServerNames);
+
+        console.log("🔧 Starting MCP Bridge services...");
+        // Start all backend services and register their tools
+        await this.startAllServices()
     }
-    
-    // Debug logging utility
-    static log(category, message, data = null) {
-        const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [${category}] ${message}`);
-        if (data) {
-            console.log(`[${timestamp}] [${category}] Data:`, JSON.stringify(data, null, 2));
-        }
-    }
-    
-    // Parse service configurations - support both old and new formats
-    parseServices(mcpServicesConfig) {
-        const services = {};
-        
-        if (Array.isArray(mcpServicesConfig)) {
-            // New array format with name, startup_command, and options
-            mcpServicesConfig.forEach(service => {
-                if (service.name && service.startup_command) {
-                    // Parse startup_command - it can be a string with quoted arguments
-                    const commandParts = this.parseCommandString(service.startup_command);
-                    
-                    services[service.name] = {
-                        command: commandParts[0], // First part is the command
-                        args: [...commandParts.slice(1), ...(service.options || [])] // Merge command args with options
-                    };
+
+    // Register all tools from all services to a server instance (cached, no verbose logging)
+    registerAllToolsCached(server) {
+        let toolCount = 0;
+
+        for (const [serviceName, service] of this.processes) {
+            if (service.tools && service.initialized) {
+                for (const tool of service.tools) {
+                    const toolName = `${serviceName}_${tool.name}`;
+
+                    // Convert the tool's inputSchema to zod schema
+                    const zodSchema = this.convertToZodSchema(tool.inputSchema);
+
+                    // Register the tool
+                    server.tool(
+                        toolName,
+                        `[${serviceName.toUpperCase()}] ${tool.description}`,
+                        zodSchema,
+                        async (parameters) => {
+                            try {
+                                const result = await this.callTool(serviceName, tool.name, parameters);
+
+                                // Format the result nicely
+                                let resultText;
+                                if (typeof result === 'string') {
+                                    resultText = result;
+                                } else if (result && typeof result === 'object') {
+                                    resultText = JSON.stringify(result, null, 2);
+                                } else {
+                                    resultText = String(result || 'Operation completed successfully');
+                                }
+
+                                return {
+                                    content: [{
+                                        type: "text",
+                                        text: `✅ ${tool.name} result:\n\n${resultText}`
+                                    }]
+                                };
+                            } catch (error) {
+                                return {
+                                    content: [{
+                                        type: "text",
+                                        text: `❌ Error calling ${tool.name}: ${error.message}`
+                                    }]
+                                };
+                            }
+                        }
+                    );
+                    toolCount++;
                 }
-            });
-        } else if (typeof mcpServicesConfig === 'object') {
-            // Legacy format - each service is an array of command parts
-            Object.entries(mcpServicesConfig).forEach(([name, commandArray]) => {
-                if (Array.isArray(commandArray) && commandArray.length > 0) {
-                    services[name] = {
-                        command: commandArray[0], // First element is the command
-                        args: commandArray.slice(1) // Rest are arguments
-                    };
-                } else if (typeof commandArray === 'string') {
-                    // Legacy string format
-                    services[name] = {
-                        command: commandArray,
-                        args: []
-                    };
-                }
-            });
-        }
-        
-        return services;
-    }
-    
-    // Parse command string that may contain quoted arguments
-    parseCommandString(commandString) {
-        const parts = [];
-        let current = '';
-        let inQuotes = false;
-        let quoteChar = '';
-        
-        for (let i = 0; i < commandString.length; i++) {
-            const char = commandString[i];
-            
-            if (!inQuotes && (char === '"' || char === "'")) {
-                inQuotes = true;
-                quoteChar = char;
-            } else if (inQuotes && char === quoteChar) {
-                inQuotes = false;
-                quoteChar = '';
-            } else if (!inQuotes && char === ' ') {
-                if (current) {
-                    parts.push(current);
-                    current = '';
-                }
-            } else {
-                current += char;
             }
         }
-        
-        if (current) {
-            parts.push(current);
+
+        // Only log once when creating a new server instance
+        if (toolCount > 0) {
+            console.log(`✅ Registered ${toolCount} tools for new server instance`);
         }
-        
-        return parts;
     }
-    
-    // Convert JSON Schema to Zod schema dynamically (from original)
+
+    // Parse service configurations - support both old and new formats
+    async parseServices(mcpServicesConfig) {
+        const services = {};
+
+        if (Array.isArray(mcpServicesConfig)) {
+            // New format: array of service objects
+            for (const serviceConfig of mcpServicesConfig) {
+                if (serviceConfig.name && serviceConfig.startup_command) {
+                    // Parse startup_command string into array
+                    const commandParts = serviceConfig.startup_command.split(/\s+/);
+
+                    // Add options if present
+                    let fullCommand = commandParts;
+                    if (serviceConfig.options && Array.isArray(serviceConfig.options)) {
+                        fullCommand = [...commandParts, ...serviceConfig.options];
+                    }
+
+                    services[serviceConfig.name] = fullCommand;
+                }
+            }
+        } else if (typeof mcpServicesConfig === 'object' && mcpServicesConfig !== null) {
+            // Old format: object with service names as keys and arrays as values
+            for (const [serviceName, command] of Object.entries(mcpServicesConfig)) {
+                if (Array.isArray(command)) {
+                    services[serviceName] = command;
+                }
+            }
+        }
+
+        return services;
+    }
+
+    async startService(serviceName, command) {
+        console.log(`🔧 Starting ${serviceName} service...`);
+
+        const proc = spawn(command[0], command.slice(1), {
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        const service = {
+            proc,
+            responseBuffer: '',
+            initialized: false,
+            tools: [],
+            serviceName
+        };
+
+        this.processes.set(serviceName, service);
+
+        // Handle stdout
+        proc.stdout.on('data', (data) => {
+            service.responseBuffer += data.toString();
+            this.processServiceOutput(serviceName);
+        });
+
+        // Handle stderr
+        proc.stderr.on('data', (data) => {
+            const output = data.toString().trim();
+            if (output && !output.includes('npm WARN') && !output.includes('downloading')) {
+                console.log(`[${serviceName}] ${output}`);
+            }
+        });
+
+        // Handle exit
+        proc.on('close', (code) => {
+            console.error(`[${serviceName}] ❌ Process exited with code ${code}`);
+            this.processes.delete(serviceName);
+        });
+
+        // Initialize the service
+        await this.initializeService(serviceName);
+
+        return service;
+    }
+
+    async initializeService(serviceName) {
+        const service = this.processes.get(serviceName);
+        if (!service) return;
+
+        try {
+            // Send initialize
+            const initRequest = {
+                jsonrpc: "2.0",
+                id: this.requestIdCounter++,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-03-26",
+                    capabilities: {},
+                    clientInfo: {
+                        name: "dynamic-mcp-bridge",
+                        version: "1.0.0"
+                    }
+                }
+            };
+
+            DebugLogger.logMCPRequest(serviceName, initRequest);
+            service.proc.stdin.write(JSON.stringify(initRequest) + '\n');
+            await this.waitForResponse(initRequest.id);
+
+            // Send tools/list
+            const toolsRequest = {
+                jsonrpc: "2.0",
+                id: this.requestIdCounter++,
+                method: "tools/list",
+                params: {}
+            };
+
+            DebugLogger.logMCPRequest(serviceName, toolsRequest);
+            service.proc.stdin.write(JSON.stringify(toolsRequest) + '\n');
+            const toolsResponse = await this.waitForResponse(toolsRequest.id);
+
+            if (toolsResponse && toolsResponse.result && toolsResponse.result.tools) {
+                service.tools = toolsResponse.result.tools;
+                service.initialized = true;
+                console.log(`✅ ${serviceName} initialized with ${service.tools.length} tools`);
+
+                // Dynamically register all tools from this service
+                this.registerServiceTools(serviceName, service.tools);
+            } else {
+                console.log(`⚠️  ${serviceName} initialized but no tools found`);
+            }
+        } catch (error) {
+            console.error(`❌ Failed to initialize ${serviceName}:`, error.message);
+        }
+    }
+
+    registerServiceTools(serviceName, tools) {
+        console.log(`🔧 registerServiceTools called for ${serviceName} with ${tools.length} tools. Current registered count: ${this.registeredTools.size}`);
+        // Just track the tools, they will be registered to server instances dynamically
+        for (const tool of tools) {
+            const toolName = `${serviceName}_${tool.name}`;
+            this.registeredTools.add(toolName);
+        }
+        console.log(`🎯 Tracked ${tools.length} tools for service ${serviceName}. Total unique tools: ${this.registeredTools.size}`);
+    }
+
     convertToZodSchema(inputSchema) {
+        // Convert JSON Schema to Zod schema dynamically
         if (!inputSchema || !inputSchema.properties) {
             return {};
         }
 
         const zodFields = {};
-        
+
         for (const [fieldName, fieldSchema] of Object.entries(inputSchema.properties)) {
             let zodField;
-            
+
             switch (fieldSchema.type) {
                 case 'string':
                     zodField = z.string();
@@ -213,159 +325,23 @@ export class LauncherProxyService {
                 default:
                     zodField = z.any();
             }
-            
+
             // Add description if available
             if (fieldSchema.description) {
                 zodField = zodField.describe(fieldSchema.description);
             }
-            
+
             // Make optional if not required
             if (!inputSchema.required || !inputSchema.required.includes(fieldName)) {
                 zodField = zodField.optional();
             }
-            
+
             zodFields[fieldName] = zodField;
         }
-        
+
         return zodFields;
     }
-    
-    // Wait for response with timeout (from original)
-    async waitForResponse(requestId, timeoutMs = 15000) {
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                this.pendingRequests.delete(requestId);
-                reject(new Error(`Request ${requestId} timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
 
-            this.pendingRequests.set(requestId, { resolve, reject, timeout });
-        });
-    }
-    
-    // Start child service process
-    async startChildService(serviceName, serviceConfig) {
-        return new Promise((resolve, reject) => {
-            try {
-                LauncherProxyService.log('SERVICE_START', `Starting ${serviceName}`, { command: serviceConfig.command, args: serviceConfig.args });
-                
-                const child = spawn(serviceConfig.command, serviceConfig.args, {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    cwd: process.cwd()
-                });
-                
-                this.childProcesses.push(child);
-                
-                child.on('error', (error) => {
-                    LauncherProxyService.log('SERVICE_ERROR', `Service ${serviceName} error: ${error.message}`);
-                    reject(error);
-                });
-                
-                child.on('exit', (code) => {
-                    LauncherProxyService.log('SERVICE_EXIT', `Service ${serviceName} exited with code ${code}`);
-                    this.services.delete(serviceName);
-                });
-                
-                // Store service info
-                this.services.set(serviceName, {
-                    name: serviceName,
-                    process: child,
-                    tools: new Map(),
-                    config: serviceConfig
-                });
-                
-                // Give the service time to start, then initialize MCP protocol
-                setTimeout(async () => {
-                    try {
-                        await this.initializeMCPService(serviceName, child);
-                        DebugLogger.log('SERVICE_READY', `Service ${serviceName} ready`);
-                        resolve();
-                    } catch (error) {
-                        DebugLogger.log('SERVICE_INIT_ERROR', `Failed to initialize ${serviceName}: ${error.message}`);
-                        reject(error);
-                    }
-                }, 1000);
-                
-            } catch (error) {
-                LauncherProxyService.log('SERVICE_START_ERROR', `Failed to start ${serviceName}: ${error.message}`);
-                reject(error);
-            }
-        });
-    }
-    
-    // Initialize MCP service with proper handshake (from original)
-    async initializeMCPService(serviceName, childProcess) {
-        const service = this.services.get(serviceName);
-        if (!service) return;
-
-        // Store process in processes map for compatibility
-        this.processes.set(serviceName, {
-            proc: childProcess,
-            responseBuffer: '',
-            initialized: false,
-            tools: [],
-            serviceName
-        });
-
-        const processInfo = this.processes.get(serviceName);
-
-        // Set up output processing
-        childProcess.stdout.on('data', (data) => {
-            processInfo.responseBuffer += data.toString();
-            this.processServiceOutput(serviceName);
-        });
-
-        try {
-            // Send initialize request
-            const initRequest = {
-                jsonrpc: "2.0",
-                id: this.requestIdCounter++,
-                method: "initialize",
-                params: {
-                    protocolVersion: "2025-03-26",
-                    capabilities: {},
-                    clientInfo: {
-                        name: "dynamic-mcp-bridge",
-                        version: "1.0.0"
-                    }
-                }
-            };
-
-            DebugLogger.logMCPRequest(serviceName, initRequest);
-            childProcess.stdin.write(JSON.stringify(initRequest) + '\n');
-            await this.waitForResponse(initRequest.id);
-
-            // Send tools/list request
-            const toolsRequest = {
-                jsonrpc: "2.0",
-                id: this.requestIdCounter++,
-                method: "tools/list",
-                params: {}
-            };
-
-            DebugLogger.logMCPRequest(serviceName, toolsRequest);
-            childProcess.stdin.write(JSON.stringify(toolsRequest) + '\n');
-            const toolsResponse = await this.waitForResponse(toolsRequest.id);
-
-            if (toolsResponse && toolsResponse.result && toolsResponse.result.tools) {
-                processInfo.tools = toolsResponse.result.tools;
-                processInfo.initialized = true;
-                console.log(`✅ ${serviceName} initialized with ${processInfo.tools.length} tools`);
-                
-                // Track tools
-                for (const tool of processInfo.tools) {
-                    const toolName = `${serviceName}_${tool.name}`;
-                    this.registeredTools.add(toolName);
-                }
-            } else {
-                console.log(`⚠️  ${serviceName} initialized but no tools found`);
-            }
-        } catch (error) {
-            console.error(`❌ Failed to initialize ${serviceName}:`, error.message);
-            throw error;
-        }
-    }
-    
-    // Process service output (from original)
     processServiceOutput(serviceName) {
         const service = this.processes.get(serviceName);
         if (!service) return;
@@ -379,7 +355,7 @@ export class LauncherProxyService {
             try {
                 const response = JSON.parse(line);
                 DebugLogger.logMCPResponse(serviceName, response);
-                
+
                 // Handle pending requests
                 if (response.id && this.pendingRequests.has(response.id)) {
                     const pending = this.pendingRequests.get(response.id);
@@ -392,316 +368,161 @@ export class LauncherProxyService {
             }
         }
     }
-    
-    // Discover and register tools from all services
-    async discoverAndRegisterTools() {
-        for (const [serviceName, serviceInfo] of this.services) {
-            try {
-                await this.discoverServiceTools(serviceName, serviceInfo);
-            } catch (error) {
-                LauncherProxyService.log('TOOL_DISCOVERY_ERROR', `Failed to discover tools for ${serviceName}: ${error.message}`);
-            }
-        }
-    }
-    
-    // Discover tools from a specific service
-    async discoverServiceTools(serviceName, serviceInfo) {
+
+    async waitForResponse(requestId, timeoutMs = 15000) {
         return new Promise((resolve, reject) => {
-            const listToolsRequest = {
-                jsonrpc: "2.0",
-                id: `discover_${serviceName}_${Date.now()}`,
-                method: "tools/list"
-            };
-            
-            LauncherProxyService.log('MCP_OUT', `→ ${serviceName}`, listToolsRequest);
-            
-            serviceInfo.process.stdin.write(JSON.stringify(listToolsRequest) + '\n');
-            
             const timeout = setTimeout(() => {
-                reject(new Error(`Tool discovery timeout for ${serviceName}`));
-            }, 10000);
-            
-            const handleResponse = (data) => {
-                try {
-                    const lines = data.toString().split('\n').filter(line => line.trim());
-                    
-                    for (const line of lines) {
-                        try {
-                            const response = JSON.parse(line);
-                            
-                            if (response.id === listToolsRequest.id) {
-                                clearTimeout(timeout);
-                                serviceInfo.process.stdout.removeListener('data', handleResponse);
-                                
-                                LauncherProxyService.log('MCP_IN', `← ${serviceName}`, response);
-                                
-                                if (response.result && response.result.tools) {
-                                    this.registerToolsForService(serviceName, response.result.tools);
-                                    resolve(response.result.tools);
-                                } else {
-                                    resolve([]);
-                                }
-                                return;
-                            }
-                        } catch (parseError) {
-                            // Skip invalid JSON lines
-                        }
-                    }
-                } catch (error) {
-                    LauncherProxyService.log('TOOL_DISCOVERY_PARSE_ERROR', `Parse error for ${serviceName}: ${error.message}`);
-                }
-            };
-            
-            serviceInfo.process.stdout.on('data', handleResponse);
-        });
-    }
-    
-    // Register tools for a service with prefixed names
-    registerToolsForService(serviceName, tools) {
-        const service = this.services.get(serviceName);
-        if (!service) return;
-        
-        tools.forEach(tool => {
-            const prefixedName = `${serviceName}_${tool.name}`;
-            service.tools.set(prefixedName, tool);
-            
-            // Register with MCP server
-            this.server.setRequestHandler({ method: `tools/call`, params: { name: prefixedName } }, async (request) => {
-                return await this.handleToolCall(serviceName, tool.name, request.params.arguments || {});
+                this.pendingRequests.delete(requestId);
+                reject(new Error(`Request ${requestId} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            this.pendingRequests.set(requestId, {
+                resolve,
+                reject,
+                timeout
             });
-            
-            LauncherProxyService.log('TOOL_REGISTERED', `Registered ${prefixedName} from ${serviceName}`);
+        });
+    }
+
+    async callTool(serviceName, toolName, parameters) {
+        const service = this.processes.get(serviceName);
+        if (!service || !service.initialized) {
+            throw new Error(`Service ${serviceName} not available`);
+        }
+
+        const requestId = this.requestIdCounter++;
+        const request = {
+            jsonrpc: "2.0",
+            id: requestId,
+            method: "tools/call",
+            params: {
+                name: toolName,
+                arguments: parameters
+            }
+        };
+
+        DebugLogger.logMCPRequest(serviceName, request);
+        service.proc.stdin.write(JSON.stringify(request) + '\n');
+
+        const response = await this.waitForResponse(requestId, 30000);
+
+        if (response.error) {
+            throw new Error(response.error.message || 'Tool call failed');
+        }
+
+        return response.result;
+    }
+
+    // Create a new server instance for each request (stateless mode)
+    createServer() {
+        const server = new McpServer({
+            name: "dynamic-mcp-bridge",
+            version: "1.0.0",
         });
         
-        // Update tools list handler
-        this.updateToolsListHandler();
-    }
-    
-    // Update the tools/list handler with all discovered tools
-    updateToolsListHandler() {
-        const allTools = [];
+        // Register all tools from all services (cached registration - no verbose logging)
+        this.registerAllToolsCached(server);
         
-        for (const [serviceName, service] of this.services) {
-            for (const [prefixedName, tool] of service.tools) {
-                allTools.push({
-                    name: prefixedName,
-                    description: `[${serviceName}] ${tool.description || ''}`,
-                    inputSchema: tool.inputSchema || { type: "object", properties: {} }
+        return server;
+    }    
+
+    async handleMCPRequest(req, res) {
+        const requestId = req.requestId || 'unknown';
+        const startTime = req.startTime || Date.now();
+
+        try {
+            console.log(`[${new Date().toISOString()}] [REQUEST_${requestId}] ========== MCP PROCESSING ==========`);
+
+            // In stateless mode, create a new instance of transport and server for each request
+            // to ensure complete isolation. A single instance would cause request ID collisions
+            // when multiple clients connect concurrently.
+            const transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: undefined, // Disable session management for stateless mode
+                enableJsonResponse: false // Use SSE streaming
+            });
+
+            const server = this.createServer();
+
+            // Override res.write to capture SSE chunks from StreamableHTTPTransport
+            const originalWrite = res.write;
+            let chunkCount = 0;
+            res.write = function (chunk, encoding) {
+                chunkCount++;
+                const responseTime = Date.now() - startTime;
+                const responseTimestamp = new Date().toISOString();
+
+                // Parse the chunk to extract meaningful data
+                const chunkStr = chunk.toString();
+                let logData = chunkStr;
+
+                // Try to extract JSON from SSE data: lines
+                if (chunkStr.includes('data: ')) {
+                    const dataLines = chunkStr.split('\n').filter(line => line.startsWith('data: '));
+                    if (dataLines.length > 0) {
+                        logData = dataLines.map(line => line.substring(6)).join('\n');
+                    }
+                }
+
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== SSE CHUNK ${chunkCount} ==========`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Chunk Size: ${chunk.length} bytes`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Data: ${logData.substring(0, 1000)}${logData.length > 1000 ? '...' : ''}`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+
+                return originalWrite.call(this, chunk, encoding);
+            };
+
+            await server.connect(transport);
+            await transport.handleRequest(req, res, req.body);
+
+        } catch (error) {
+            const responseTime = Date.now() - startTime;
+            const responseTimestamp = new Date().toISOString();
+
+            console.error(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== ERROR RESPONSE ==========`);
+            console.error(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+            console.error(`[${responseTimestamp}] [RESPONSE_${requestId}] Error:`, error.message);
+            console.error(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+
+            console.error("Error handling request:", error);
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: 'Internal server error'
                 });
             }
         }
-        
-        this.server.setRequestHandler({ method: "tools/list" }, async () => {
-            return { tools: allTools };
-        });
-    }
-    
-    // Handle tool call by forwarding to appropriate service
-    async handleToolCall(serviceName, toolName, args) {
-        const service = this.services.get(serviceName);
-        if (!service) {
-            throw new Error(`Service ${serviceName} not found`);
+    };
+
+    async startAllServices() {
+        console.log('🚀 Starting dynamic MCP bridge...');
+        console.log(`📋 Services to start: ${Object.values(this.services).map(service => service.name).join(", ")}`);
+
+        for (const [serviceName, command] of Object.entries(this.services)) {
+            try {
+                await this.startService(serviceName, command);
+            } catch (error) {
+                console.error(`❌ Failed to start ${serviceName}:`, error.message);
+            }
         }
-        
-        return new Promise((resolve, reject) => {
-            const toolCallRequest = {
-                jsonrpc: "2.0",
-                id: `tool_${serviceName}_${toolName}_${Date.now()}`,
-                method: "tools/call",
-                params: {
-                    name: toolName,
-                    arguments: args
-                }
-            };
-            
-            LauncherProxyService.log('MCP_OUT', `→ ${serviceName}`, toolCallRequest);
-            
-            service.process.stdin.write(JSON.stringify(toolCallRequest) + '\n');
-            
-            const timeout = setTimeout(() => {
-                reject(new Error(`Tool call timeout for ${serviceName}/${toolName}`));
-            }, 30000);
-            
-            const handleResponse = (data) => {
-                try {
-                    const lines = data.toString().split('\n').filter(line => line.trim());
-                    
-                    for (const line of lines) {
-                        try {
-                            const response = JSON.parse(line);
-                            
-                            if (response.id === toolCallRequest.id) {
-                                clearTimeout(timeout);
-                                service.process.stdout.removeListener('data', handleResponse);
-                                
-                                LauncherProxyService.log('MCP_IN', `← ${serviceName}`, response);
-                                
-                                if (response.error) {
-                                    reject(new Error(response.error.message || 'Tool call failed'));
-                                } else {
-                                    resolve(response.result || {});
-                                }
-                                return;
-                            }
-                        } catch (parseError) {
-                            // Skip invalid JSON lines
-                        }
-                    }
-                } catch (error) {
-                    LauncherProxyService.log('TOOL_CALL_PARSE_ERROR', `Parse error for ${serviceName}/${toolName}: ${error.message}`);
-                }
-            };
-            
-            service.process.stdout.on('data', handleResponse);
-        });
-    }
-    
-    setupRoutes() {
-        // SSE endpoint
-        this.sseRouter.get('/', (req, res) => {
-            LauncherProxyService.log('HTTP_IN', `SSE connection from ${req.ip}`);
-            
-            res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Cache-Control'
-            });
-            
-            const transport = new StreamableHTTPServerTransport(res);
-            this.server.connect(transport);
-            
-            req.on('close', () => {
-                LauncherProxyService.log('HTTP_OUT', 'SSE connection closed');
-            });
-        });
-        
-        // MCP Protocol endpoints (from original)
-        this.apiRouter.post('/message', async (req, res) => {
-            console.log('MCP message request received:', req.body);
-            try {
-                const transport = new StreamableHTTPServerTransport(res);
-                this.server.connect(transport);
-                // Don't set headers here - StreamableHTTPServerTransport will handle them
-                await transport.handleRequest(req, res, req.body);
-            } catch (error) {
-                console.error('MCP message error:', error);
-                // Only set error response if headers haven't been sent yet
-                if (!res.headersSent) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: error.message }));
-                }
-            }
-        });
-        
-        // Also handle root route for MCP (from original)
-        this.apiRouter.post('/', async (req, res) => {
-            console.log('MCP root request received:', req.body);
-            try {
-                const transport = new StreamableHTTPServerTransport(res);
-                this.server.connect(transport);
-                // Don't set headers here - StreamableHTTPServerTransport will handle them
-                await transport.handleRequest(req, res, req.body);
-            } catch (error) {
-                console.error('MCP root error:', error);
-                // Only set error response if headers haven't been sent yet
-                if (!res.headersSent) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: error.message }));
-                }
-            }
-        });
-        
-        // API endpoints
-        this.apiRouter.get('/tools', async (_, res) => {
-            try {
-                const toolsList = await this.server.request({ method: "tools/list" }, {});
-                res.json(toolsList);
-            } catch (error) {
-                res.status(500).json({ error: error.message });
-            }
-        });
-        
-        this.apiRouter.post('/tools/:toolName', async (req, res) => {
-            try {
-                const result = await this.server.request(
-                    { method: "tools/call", params: { name: req.params.toolName } },
-                    req.body
-                );
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ error: error.message });
-            }
-        });
-        
-        // Health check for launcher proxy
-        this.mainRouter.get('/launcher/health', (_, res) => {
-            const servicesStatus = {};
-            for (const [name, service] of this.services) {
-                servicesStatus[name] = {
-                    running: service.process && !service.process.killed,
-                    toolCount: service.tools.size
-                };
-            }
-            
-            res.json({
-                status: 'healthy',
-                services: servicesStatus,
-                totalServices: this.services.size
-            });
-        });
-        
-        // Service management endpoints
-        this.mainRouter.get('/launcher/services', (_, res) => {
-            const servicesList = {};
-            for (const [name, service] of this.services) {
-                servicesList[name] = {
-                    name: service.name,
-                    running: service.process && !service.process.killed,
-                    tools: Array.from(service.tools.keys()),
-                    config: service.config
-                };
-            }
-            res.json(servicesList);
-        });
-    }
-    
-    getSSERouter() {
-        return this.sseRouter;
-    }
-    
-    getAPIRouter() {
-        return this.apiRouter;
-    }
-    
-    getMainRouter() {
-        return this.mainRouter;
-    }
-    
-    async shutdown() {
-        console.log('Launcher Proxy Service shutting down...');
-        
-        // Kill all child processes
-        this.childProcesses.forEach(child => {
-            if (child && !child.killed) {
-                child.kill('SIGTERM');
-            }
-        });
-        
-        // Wait for processes to exit
+
+        // Wait a bit for all tools to be fully registered
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Force kill if still running
-        this.childProcesses.forEach(child => {
-            if (child && !child.killed) {
-                child.kill('SIGKILL');
-            }
+        console.log('🎉 All services started! Tools registered dynamically.');
+        console.log(`🎯 Total tools registered with MCP server: ${this.registeredTools.size}`);
+    }
+
+    setupRoutes() {
+        this.router.post("/message", async (req, res) => {
+            this.handleMCPRequest(req, res)
         });
-        
-        this.services.clear();
-        this.childProcesses = [];
-        
-        console.log('Launcher Proxy Service shut down complete');
+        this.router.post("/", async (req, res) => {
+            this.handleMCPRequest(req, res)
+        });
+        console.log("MCP launcher routes initialized");
+    }
+
+    getRouter() {
+        return this.router;
     }
 }

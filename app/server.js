@@ -4,22 +4,24 @@ import { DashboardService } from './services/dashboard-service.js';
 import { LauncherProxyService } from './services/launcher-proxy-service.js';
 import { OAuthProxyService } from './services/oauth-proxy-service.js';
 import YAML from 'yaml';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 class MCPServer {
     constructor() {
+
+        const __filename = fileURLToPath(import.meta.url);
+        this.appPath = dirname(__filename);
+
         this.app = express();
         this.config = {};
         this.services = {};
-        
         this.loadConfig();
-        this.setupMiddleware();
-        this.setupRoutes();
-        this.initializeServiceStubs();
     }
 
     loadConfig() {
         try {
-            this.config = YAML.parse(fs.readFileSync('./config/local.yaml', 'utf-8'));
+            this.config = YAML.parse(fs.readFileSync(this.appPath + '/config/local.yaml', 'utf-8'));
             // Set port from config if available
             if (this.config.server_port) {
                 this.port = this.config.server_port;
@@ -33,22 +35,96 @@ class MCPServer {
         }
     }    
     
-    initializeServiceStubs() {
-        // Create stub services immediately so routes can be set up
-        console.log('📋 Creating service stubs...');
-        
-        // Create service instances but don't initialize them yet
-        this.services.dashboard = new DashboardService();
-        this.services.launcherProxy = new LauncherProxyService();
-        this.services.oauthProxy = new OAuthProxyService();
-        
-        // Set up routes immediately with stub services
-        this.setupServiceRoutes();
-        console.log('✅ Service routes ready');
-    }
-    
-    setupMiddleware() {
+    async setupMiddleware() {
         this.app.use(express.json());
+
+        // Handle CORS and security headers
+        this.app.use((req, res, next) => {
+            const origin = req.headers.origin;
+            res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+            if (req.method === 'OPTIONS') {
+                return res.sendStatus(200);
+            }
+            next();
+        });      
+
+        // Enhanced debug logging middleware
+        this.app.use((req, res, next) => {
+            const timestamp = new Date().toISOString();
+            const requestId = Math.random().toString(36).substring(2, 11);
+
+            // Log incoming request
+            console.log(`[${timestamp}] [REQUEST_${requestId}] ========== INCOMING REQUEST ==========`);
+            console.log(`[${timestamp}] [REQUEST_${requestId}] Method: ${req.method}`);
+            console.log(`[${timestamp}] [REQUEST_${requestId}] URL: ${req.url}`);
+            console.log(`[${timestamp}] [REQUEST_${requestId}] Headers:`, JSON.stringify(req.headers, null, 2));
+            if (req.body && Object.keys(req.body).length > 0) {
+                console.log(`[${timestamp}] [REQUEST_${requestId}] Body:`, JSON.stringify(req.body, null, 2));
+            }
+            console.log(`[${timestamp}] [REQUEST_${requestId}] Query:`, JSON.stringify(req.query, null, 2));
+
+            // Store request ID for response logging
+            req.requestId = requestId;
+            req.startTime = Date.now();
+
+            // Override res.json to log responses
+            const originalJson = res.json;
+            res.json = function (body) {
+                const responseTime = Date.now() - req.startTime;
+                const responseTimestamp = new Date().toISOString();
+
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Headers:`, JSON.stringify(res.getHeaders(), null, 2));
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Body:`, JSON.stringify(body, null, 2));
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+
+                return originalJson.call(this, body);
+            };
+
+            // Override res.send to log text responses
+            const originalSend = res.send;
+            res.send = function (body) {
+                const responseTime = Date.now() - req.startTime;
+                const responseTimestamp = new Date().toISOString();
+
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Headers:`, JSON.stringify(res.getHeaders(), null, 2));
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Body: ${body}`);
+                console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+
+                return originalSend.call(this, body);
+            };
+
+            // Override res.end to log responses without explicit body
+            const originalEnd = res.end;
+            res.end = function (chunk, encoding) {
+                if (!res.headersSent && chunk) {
+                    const responseTime = Date.now() - req.startTime;
+                    const responseTimestamp = new Date().toISOString();
+
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Headers:`, JSON.stringify(res.getHeaders(), null, 2));
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Chunk: ${chunk}`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+                }
+
+                return originalEnd.call(this, chunk, encoding);
+            };
+
+            next();
+        });
+
+
         this.app.use(express.urlencoded({ extended: true }));
         
         // Ensure query parsing is enabled
@@ -66,6 +142,14 @@ class MCPServer {
     }
     
     async initializeServices() {
+
+        console.log('📋 Creating services...');
+        console.log('Application path: ', this.appPath);
+
+        this.services.dashboard = new DashboardService(this.appPath);
+        this.services.launcherProxy = new LauncherProxyService(this.appPath);
+        this.services.oauthProxy = new OAuthProxyService(this.appPath);
+
         try {
             // Initialize Dashboard Service (already created)
             console.log('  📊 Initializing Dashboard Service...');
@@ -89,40 +173,7 @@ class MCPServer {
         }
     }
     
-    setupRoutes() {
-        // Health check
-        this.app.get('/health', (_, res) => {
-            res.json({ 
-                status: 'healthy', 
-                services: Object.keys(this.services),
-                timestamp: new Date().toISOString()
-            });
-        });
-        
-        // Fallback route for uninitialized services
-        this.app.use('*', (req, res) => {
-            if (Object.keys(this.services).length === 0) {
-                res.status(503).json({ 
-                    error: 'Services are initializing',
-                    message: 'Please wait for services to start'
-                });
-            } else {
-                res.status(404).json({ 
-                    error: 'Route not found',
-                    availableServices: ['dashboard', 'mcp', 'oauth'],
-                    path: req.originalUrl
-                });
-            }
-        });
-    }
-    
-    setupServiceRoutes() {
-        // Clear existing routes except health and fallback
-        this.app._router = express.Router();
-        
-        // Re-add middleware
-        this.setupMiddleware();
-        
+    async setupServiceRoutes() {
         // Health check - make it very specific and first
         this.app.get('/health', (req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -138,31 +189,37 @@ class MCPServer {
         
         // OAuth Proxy routes - Mount both with and without /oauth prefix
         // Standard OAuth2 endpoints (expected by clients)
-        this.app.use('/', this.services.oauthProxy.getRouter());
         this.app.use('/login', this.services.oauthProxy.getLoginRouter());
         this.app.use('/consent', this.services.oauthProxy.getConsentRouter());
-        // Also mount with /oauth prefix for backwards compatibility
         this.app.use('/oauth', this.services.oauthProxy.getRouter());
         this.app.use('/oauth/login', this.services.oauthProxy.getLoginRouter());
         this.app.use('/oauth/consent', this.services.oauthProxy.getConsentRouter());
         
-        // Launcher Proxy routes (prefix: /mcp or root for SSE)
-        this.app.use('/sse', this.services.launcherProxy.getSSERouter());
-        this.app.use('/mcp', this.services.launcherProxy.getAPIRouter());
-        this.app.use('/launcher', this.services.launcherProxy.getMainRouter());
-        
-        // Root level MCP routes (for direct MCP access)
-        this.app.use('/', this.services.launcherProxy.getAPIRouter());
-        
+        // Launcher Proxy routes
+        this.app.use("/message", this.services.launcherProxy.getRouter());
+        this.app.use("/", this.services.launcherProxy.getRouter());
+
         // Fallback route
         this.app.use('*', (req, res) => {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ 
                 error: 'Route not found',
-                availableServices: ['dashboard', 'mcp', 'oauth'],
                 path: req.originalUrl
             }));
         });
+
+        console.log("registered routes");
+        this.app._router.stack.forEach(middleware => {
+        if (middleware.route) {
+            console.log(`${Object.keys(middleware.route.methods)[0].toUpperCase()} ${middleware.route.path}`);
+        } else if (middleware.name === 'router') {
+            middleware.handle.stack.forEach(handler => {
+            if (handler.route) {
+                console.log(`${Object.keys(handler.route.methods)[0].toUpperCase()} ${middleware.regexp.source.replace('\\/?(?=\\/|$)', '').replace(/\\\//g, '/')}${handler.route.path}`);
+            }
+            });
+        }
+        });        
     }
     
     async start() {
@@ -172,46 +229,18 @@ class MCPServer {
             // Start HTTP server first
             console.log('🌐 Starting HTTP server on port', this.port);
             this.server = this.app.listen(this.port, async () => {
-                console.log(`
-╭─────────────────────────────────────────────────────────╮
-│                   MCP Unified Server                    │
-├─────────────────────────────────────────────────────────┤
-│ Port: ${this.port.toString().padEnd(48)} │
-│ Status: Starting services...                           │
-│ Health Check:   http://localhost:${this.port}/health        │
-╰─────────────────────────────────────────────────────────╯
-                `);
                 
                 // Initialize services in the background after server is listening
                 console.log('📋 Initializing services in background...');
                 try {
+                    await this.setupMiddleware();    
+                    console.log('✅ Middleware ready');
                     await this.initializeServices();
-                    
-                    console.log(`
-╭─────────────────────────────────────────────────────────╮
-│                   MCP Unified Server                    │
-├─────────────────────────────────────────────────────────┤
-│ Port: ${this.port.toString().padEnd(48)} │
-│ Status: ✅ All services ready!                          │
-│ Services:                                               │
-│   • Dashboard:      http://localhost:${this.port}/dashboard      │
-│   • MCP Proxy:      http://localhost:${this.port}/mcp           │
-│   • SSE Endpoint:   http://localhost:${this.port}/sse           │
-│   • OAuth:          http://localhost:${this.port}/oauth         │
-│   • Health Check:   http://localhost:${this.port}/health        │
-╰─────────────────────────────────────────────────────────╯
-                    `);
+                    console.log('✅ Services ready');
+                    await this.setupServiceRoutes();
+                    console.log('✅ Service routes ready');
                 } catch (error) {
                     console.error('❌ Error initializing services in background:', error);
-                    console.log(`
-╭─────────────────────────────────────────────────────────╮
-│                   MCP Unified Server                    │
-├─────────────────────────────────────────────────────────┤
-│ Port: ${this.port.toString().padEnd(48)} │
-│ Status: ⚠️  Basic server running, services failed       │
-│ Health Check:   http://localhost:${this.port}/health        │
-╰─────────────────────────────────────────────────────────╯
-                    `);
                 }
             });
             

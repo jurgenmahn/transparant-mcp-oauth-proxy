@@ -5,7 +5,8 @@ import path from 'path';
 import yaml from 'yaml';
 
 export class DashboardService {
-    constructor() {
+    constructor(appPath) {
+        this.appPath = appPath;
         this.router = express.Router();
         this.config = {};
         this.setupRoutes();
@@ -18,7 +19,7 @@ export class DashboardService {
     
     async loadDashboardConfig() {
         try {
-            const configPath = path.join(process.cwd(), 'config', 'dashboard.yaml');
+            const configPath = path.resolve(this.appPath + '/config/dashboard.yaml');
             const configContent = await fs.readFile(configPath, 'utf8');
             this.config = yaml.parse(configContent);
             console.log('Dashboard configuration loaded successfully');

@@ -10,7 +10,8 @@ import YAML from 'yaml';
 const dnsPromises = dns.promises;
 
 export class OAuthProxyService {
-    constructor() {
+    constructor(appPath) {
+        this.appPath = appPath;
         this.router = express.Router();
         this.loginRouter = express.Router();
         this.consentRouter = express.Router();
@@ -18,7 +19,7 @@ export class OAuthProxyService {
         
         // Load config immediately in constructor for stub functionality
         try {
-            this.config = YAML.parse(fs.readFileSync('./config/local.yaml', 'utf-8'));
+            this.config = YAML.parse(fs.readFileSync(this.appPath + '/config/local.yaml', 'utf-8'));
         } catch (error) {
             console.error('Warning: Could not load OAuth config in constructor:', error.message);
             // Set default config for stub functionality
@@ -33,17 +34,7 @@ export class OAuthProxyService {
     }
     
     async initialize() {
-        await this.loadConfig();
         console.log('OAuth Proxy Service initialized');
-    }
-    
-    async loadConfig() {
-        try {
-            this.config = YAML.parse(fs.readFileSync('./config/local.yaml', 'utf-8'));
-        } catch (error) {
-            console.error('Error loading OAuth proxy config:', error);
-            throw error;
-        }
     }
     
     setupMiddleware() {
