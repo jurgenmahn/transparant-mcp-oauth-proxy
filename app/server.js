@@ -187,16 +187,13 @@ class MCPServer {
         // Dashboard routes (prefix: /dashboard)
         this.app.use('/dashboard', this.services.dashboard.getRouter());
         
-        // OAuth Proxy routes - Mount both with and without /oauth prefix
+        // OAuth Proxy routes - Mount only once to avoid duplicates
         // Standard OAuth2 endpoints (expected by clients)
         this.app.use('/login', this.services.oauthProxy.getLoginRouter());
         this.app.use('/consent', this.services.oauthProxy.getConsentRouter());
         this.app.use('/oauth', this.services.oauthProxy.getRouter());
-        this.app.use('/oauth/login', this.services.oauthProxy.getLoginRouter());
-        this.app.use('/oauth/consent', this.services.oauthProxy.getConsentRouter());
         
-        // Launcher Proxy routes
-        this.app.use("/message", this.services.launcherProxy.getRouter());
+        // Launcher Proxy routes - Mount only at root to handle both /message and / 
         this.app.use("/", this.services.launcherProxy.getRouter());
 
         // Fallback route
