@@ -36,6 +36,8 @@ class MCPServer {
     }    
     
     async setupMiddleware() {
+        // Enable trust proxy to correctly identify secure connections behind reverse proxies
+        this.app.set('trust proxy', true);
         this.app.use(express.json());
 
         // Handle CORS and security headers
