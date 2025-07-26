@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{SERVICE_NAME}} - API Documentation</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .endpoint { background: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 10px 0; }
+        .method { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; color: white; }
+        .get { background: #28a745; } .post { background: #007bff; } .put { background: #ffc107; color: black; }
+        .scope { background: #17a2b8; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .config { background: #e9ecef; padding: 15px; border-radius: 5px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{SERVICE_NAME}}</h1>
+        <p>OAuth 2.0 / OpenID Connect API Documentation</p>
+        <p><strong>Base URL:</strong> {{BASE_URL}}</p>
+    </div>
+    
+    <h2>Configuration</h2>
+    <div class="config">
+        <p><strong>Client ID:</strong> {{CLIENT_ID}}</p>
+        <p><strong>Supported Scopes:</strong> {{SUPPORTED_SCOPES}}</p>
+        <p><strong>Allowed Domains:</strong> {{ALLOWED_DOMAINS}}</p>
+        <p><strong>CORS Origins:</strong> {{CORS_ORIGINS}}</p>
+    </div>
+    
+    <h2>OAuth 2.0 / OpenID Connect Endpoints</h2>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /.well-known/openid-configuration</h3>
+        <p>OpenID Connect Discovery endpoint</p>
+        <p><strong>Description:</strong> Returns OpenID Connect configuration</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /oauth2/auth</h3>
+        <p>OAuth 2.0 Authorization endpoint</p>
+        <p><strong>Parameters:</strong> client_id, redirect_uri, scope, state, response_type</p>
+        <p><strong>Description:</strong> Initiates OAuth authorization flow</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3><span class="method post">POST</span> /oauth2/token</h3>
+        <p>OAuth 2.0 Token endpoint</p>
+        <p><strong>Description:</strong> Exchange authorization code for access token</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /userinfo</h3>
+        <p>OpenID Connect UserInfo endpoint</p>
+        <p><strong>Requires:</strong> <span class="scope">Bearer Token</span></p>
+        <p><strong>Description:</strong> Returns user information</p>
+    </div>
+    
+    <h2>MCP Protected Resources</h2>
+    
+    <div class="endpoint">
+        <h3><span class="method post">POST</span> /mcp/message</h3>
+        <p>Send message to MCP services</p>
+        <p><strong>Requires:</strong> <span class="scope">mcp:read</span></p>
+        <p><strong>Description:</strong> Protected endpoint for MCP communication</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /mcp/</h3>
+        <p>MCP service root</p>
+        <p><strong>Requires:</strong> <span class="scope">mcp:read</span></p>
+        <p><strong>Description:</strong> Protected MCP service access</p>
+    </div>
+    
+    <h2>Discovery Endpoints</h2>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /.well-known/oauth-protected-resource</h3>
+        <p>OAuth Protected Resource Discovery</p>
+        <p><strong>Description:</strong> Dynamically generated resource server metadata</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3><span class="method get">GET</span> /.well-known/oauth-protected-resource/mcp/*</h3>
+        <p>MCP-specific Protected Resource metadata</p>
+        <p><strong>Description:</strong> MCP service-specific OAuth resource information</p>
+    </div>
+    
+    <h2>Authentication Flow</h2>
+    <ol>
+        <li>Access protected resource (e.g., <code>/mcp/</code>)</li>
+        <li>Get redirected to <code>/oauth2/auth</code> with generated parameters</li>
+        <li>Complete login at <code>/login</code></li>
+        <li>Grant consent at <code>/consent</code></li>
+        <li>Get redirected back to <code>/oauth/callback</code></li>
+        <li>Session established, access granted to protected resources</li>
+    </ol>
+    
+    <footer style="margin-top: 40px; text-align: center; color: #666;">
+        <p>Generated dynamically by OpenID Connect Router</p>
+    </footer>
+</body>
+</html>

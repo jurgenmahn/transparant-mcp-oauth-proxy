@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import { DashboardService } from './services/dashboard-service.js';
 import { LauncherProxyService } from './services/launcher-proxy-service.js';
-import { OAuthProxyService } from './services/oauth-proxy-service.js';
+import { UnifiedOAuthService } from './services/unified-oauth-service.js';
 import YAML from 'yaml';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -148,7 +148,7 @@ class MCPServer {
 
         this.services.dashboard = new DashboardService(this.appPath);
         this.services.launcherProxy = new LauncherProxyService(this.appPath);
-        this.services.oauthProxy = new OAuthProxyService(this.appPath);
+        this.services.unifiedOAuth = new UnifiedOAuthService(this.appPath);
 
         try {
             // Initialize Dashboard Service (already created)
@@ -161,10 +161,10 @@ class MCPServer {
             await this.services.launcherProxy.initialize();
             console.log('  ✅ Launcher Proxy Service ready');
             
-            // Initialize OAuth Proxy Service (already created)
-            console.log('  🔐 Initializing OAuth Proxy Service...');
-            await this.services.oauthProxy.initialize();
-            console.log('  ✅ OAuth Proxy Service ready');
+            // Initialize Unified OAuth Service
+            console.log('  🔐 Initializing Unified OAuth Service...');
+            await this.services.unifiedOAuth.initialize();
+            console.log('  ✅ Unified OAuth Service ready');
             
             console.log('✅ All services initialized successfully');
         } catch (error) {
@@ -187,15 +187,32 @@ class MCPServer {
         // Dashboard routes (prefix: /dashboard)
         this.app.use('/dashboard', this.services.dashboard.getRouter());
         
-        // OAuth Proxy routes - Mount only once to avoid duplicates
-        // Standard OAuth2 endpoints (expected by clients)
-        this.app.use('/login', this.services.oauthProxy.getLoginRouter());
-        this.app.use('/consent', this.services.oauthProxy.getConsentRouter());
-        this.app.use('/oauth', this.services.oauthProxy.getRouter());
+        // Unified OAuth Service routes - handles all OAuth endpoints
+        this.app.use('/oauth/login', this.services.unifiedOAuth.getLoginRouter());
+        this.app.use('/oauth/consent', this.services.unifiedOAuth.getConsentRouter());
+        this.app.use('/oauth', this.services.unifiedOAuth.getRouter());
+        this.app.use('/', this.services.unifiedOAuth.getRouter()); // For root-level well-known endpoints
         
+        // Root level OAuth endpoints for APISIX compatibility
+        this.app.get('/authorize', (req, res) => {
+            // Redirect /authorize to /oauth/oauth2/auth (APISIX compatibility)
+            const queryString = new URLSearchParams(req.query).toString();
+            const redirectUrl = `/oauth/oauth2/auth${queryString ? '?' + queryString : ''}`;
+            console.log(`[APISIX-COMPAT] Redirecting /authorize to ${redirectUrl}`);
+            res.redirect(redirectUrl);
+        });
         
-        // Launcher Proxy routes - Mount only at root to handle both /message and / 
-        this.app.use("/", this.services.launcherProxy.getRouter());
+        // OpenID Connect configuration at root level (proxy to OAuth service)
+        this.app.get('/.well-known/openid-configuration', (req, res) => {
+            res.redirect('/oauth/.well-known/openid-configuration');
+        });
+        
+        // Apply OpenID Connect middleware to /mcp/* routes
+        const oidcMiddleware = this.services.unifiedOAuth.getOpenIDConnectMiddleware();
+        this.app.use('/mcp', oidcMiddleware);
+        
+        // Launcher Proxy routes - Mount under /mcp to match OAuth discovery document
+        this.app.use("/mcp", this.services.launcherProxy.getRouter());
 
         // Fallback route
         this.app.use('*', (req, res) => {

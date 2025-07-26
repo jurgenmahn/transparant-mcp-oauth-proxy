@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  mcp-launcher:
+    build: .
+    image: mcp-launcher:latest
+    container_name: mcp-launcher
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - hydra-data:/hydra-data
+      # Mount your managed configs if you want to edit them locally
+      # - ./app/config/managed-configs:/app/config/managed-configs
+    depends_on:
+      - redis
+    environment:
+      # This is an example, adjust for your environment
+      - MCP_PUBLIC_URL=http://localhost:3000
+
+  redis:
+    image: "redis:alpine"
+    container_name: mcp-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  hydra-data:
+  redis-data:

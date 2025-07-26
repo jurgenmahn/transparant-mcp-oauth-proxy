@@ -6,7 +6,7 @@ is_mounted() {
 }
 
 # Enforce volume mounts
-REQUIRED_MOUNTS="/etcd-data /hydra-data"
+REQUIRED_MOUNTS="/hydra-data"
 
 for mount_path in $REQUIRED_MOUNTS; do
     if [ ! -d "$mount_path" ]; then
@@ -33,9 +33,6 @@ done
 
 # load env vars generated during build.
 source /.buildvars
-
-# preload etcd data
-# done by supervisor since etcd should be running
 
 echo set file and folder rights for hydra DB
 chown nonroot:nonroot /hydra-data/hydra.sqlite

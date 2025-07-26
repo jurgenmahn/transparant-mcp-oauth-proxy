@@ -1,0 +1,2766 @@
+🚀 Starting MCP Server...
+🌐 Starting HTTP server on port 3001
+📋 Initializing services in background...
+✅ Middleware ready
+📋 Creating services...
+Application path:  /home/jurgen/sites/create_all_containers/mcp-launcher/app
+MCP launcher routes initialized
+  📊 Initializing Dashboard Service...
+Dashboard configuration loaded successfully
+Dashboard Service initialized
+  ✅ Dashboard Service ready
+  🚀 Initializing Launcher Proxy Service...
+MCP servers loaded from configuration:  memory, filesystem, git, fetch, playwright, dbhub
+🔧 Starting MCP Bridge services...
+🚀 Starting dynamic MCP bridge...
+📋 Services to start: memory, filesystem, git, fetch, playwright, dbhub
+🔧 Starting memory service...
+[2025-07-26T06:30:26.934Z] [MCP_OUT] → memory
+[2025-07-26T06:30:26.934Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[memory] Knowledge Graph MCP Server running on stdio
+[2025-07-26T06:30:27.807Z] [MCP_IN] ← memory
+[2025-07-26T06:30:27.807Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "memory-server",
+      "version": "0.6.3"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 1
+}
+[2025-07-26T06:30:27.807Z] [MCP_OUT] → memory
+[2025-07-26T06:30:27.807Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:27.809Z] [MCP_IN] ← memory
+[2025-07-26T06:30:27.809Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "create_entities",
+        "description": "Create multiple new entities in the knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the entity"
+                  },
+                  "entityType": {
+                    "type": "string",
+                    "description": "The type of the entity"
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "An array of observation contents associated with the entity"
+                  }
+                },
+                "required": [
+                  "name",
+                  "entityType",
+                  "observations"
+                ]
+              }
+            }
+          },
+          "required": [
+            "entities"
+          ]
+        }
+      },
+      {
+        "name": "create_relations",
+        "description": "Create multiple new relations between entities in the knowledge graph. Relations should be in active voice",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "relations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "The name of the entity where the relation starts"
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "The name of the entity where the relation ends"
+                  },
+                  "relationType": {
+                    "type": "string",
+                    "description": "The type of the relation"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to",
+                  "relationType"
+                ]
+              }
+            }
+          },
+          "required": [
+            "relations"
+          ]
+        }
+      },
+      {
+        "name": "add_observations",
+        "description": "Add new observations to existing entities in the knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entityName": {
+                    "type": "string",
+                    "description": "The name of the entity to add the observations to"
+                  },
+                  "contents": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "An array of observation contents to add"
+                  }
+                },
+                "required": [
+                  "entityName",
+                  "contents"
+                ]
+              }
+            }
+          },
+          "required": [
+            "observations"
+          ]
+        }
+      },
+      {
+        "name": "delete_entities",
+        "description": "Delete multiple entities and their associated relations from the knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "entityNames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "An array of entity names to delete"
+            }
+          },
+          "required": [
+            "entityNames"
+          ]
+        }
+      },
+      {
+        "name": "delete_observations",
+        "description": "Delete specific observations from entities in the knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "deletions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entityName": {
+                    "type": "string",
+                    "description": "The name of the entity containing the observations"
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "An array of observations to delete"
+                  }
+                },
+                "required": [
+                  "entityName",
+                  "observations"
+                ]
+              }
+            }
+          },
+          "required": [
+            "deletions"
+          ]
+        }
+      },
+      {
+        "name": "delete_relations",
+        "description": "Delete multiple relations from the knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "relations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "The name of the entity where the relation starts"
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "The name of the entity where the relation ends"
+                  },
+                  "relationType": {
+                    "type": "string",
+                    "description": "The type of the relation"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to",
+                  "relationType"
+                ]
+              },
+              "description": "An array of relations to delete"
+            }
+          },
+          "required": [
+            "relations"
+          ]
+        }
+      },
+      {
+        "name": "read_graph",
+        "description": "Read the entire knowledge graph",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "search_nodes",
+        "description": "Search for nodes in the knowledge graph based on a query",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The search query to match against entity names, types, and observation content"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "open_nodes",
+        "description": "Open specific nodes in the knowledge graph by their names",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "An array of entity names to retrieve"
+            }
+          },
+          "required": [
+            "names"
+          ]
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 2
+}
+✅ memory initialized with 9 tools
+🔧 registerServiceTools called for memory with 9 tools. Current registered count: 0
+🎯 Tracked 9 tools for service memory. Total unique tools: 9
+🔧 Starting filesystem service...
+[2025-07-26T06:30:27.817Z] [MCP_OUT] → filesystem
+[2025-07-26T06:30:27.817Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[filesystem] Secure MCP Filesystem Server running on stdio
+[filesystem] Allowed directories: [ '/tmp' ]
+[2025-07-26T06:30:28.387Z] [MCP_IN] ← filesystem
+[2025-07-26T06:30:28.387Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "secure-filesystem-server",
+      "version": "0.2.0"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 3
+}
+[2025-07-26T06:30:28.387Z] [MCP_OUT] → filesystem
+[2025-07-26T06:30:28.387Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:28.390Z] [MCP_IN] ← filesystem
+[2025-07-26T06:30:28.390Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Read the complete contents of a file from the file system. Handles various text encodings and provides detailed error messages if the file cannot be read. Use this tool when you need to examine the contents of a single file. Use the 'head' parameter to read only the first N lines of a file, or the 'tail' parameter to read only the last N lines of a file. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "tail": {
+              "type": "number",
+              "description": "If provided, returns only the last N lines of the file"
+            },
+            "head": {
+              "type": "number",
+              "description": "If provided, returns only the first N lines of the file"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "read_multiple_files",
+        "description": "Read the contents of multiple files simultaneously. This is more efficient than reading files one by one when you need to analyze or compare multiple files. Each file's content is returned with its path as a reference. Failed reads for individual files won't stop the entire operation. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "paths"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "write_file",
+        "description": "Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Handles text content with proper encoding. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "edit_file",
+        "description": "Make line-based edits to a text file. Each edit replaces exact line sequences with new content. Returns a git-style diff showing the changes made. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "edits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "oldText": {
+                    "type": "string",
+                    "description": "Text to search for - must match exactly"
+                  },
+                  "newText": {
+                    "type": "string",
+                    "description": "Text to replace with"
+                  }
+                },
+                "required": [
+                  "oldText",
+                  "newText"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "dryRun": {
+              "type": "boolean",
+              "default": false,
+              "description": "Preview changes using git-style diff format"
+            }
+          },
+          "required": [
+            "path",
+            "edits"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "create_directory",
+        "description": "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Perfect for setting up directory structures for projects or ensuring required paths exist. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "list_directory",
+        "description": "Get a detailed listing of all files and directories in a specified path. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is essential for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "list_directory_with_sizes",
+        "description": "Get a detailed listing of all files and directories in a specified path, including sizes. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is useful for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sortBy": {
+              "type": "string",
+              "enum": [
+                "name",
+                "size"
+              ],
+              "default": "name",
+              "description": "Sort entries by name or size"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "directory_tree",
+        "description": "Get a recursive tree view of files and directories as a JSON structure. Each entry includes 'name', 'type' (file/directory), and 'children' for directories. Files have no children array, while directories always have a children array (which may be empty). The output is formatted with 2-space indentation for readability. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "move_file",
+        "description": "Move or rename files and directories. Can move files between directories and rename them in a single operation. If the destination exists, the operation will fail. Works across different directories and can be used for simple renaming within the same directory. Both source and destination must be within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "destination"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "search_files",
+        "description": "Recursively search for files and directories matching a pattern. Searches through all subdirectories from the starting path. The search is case-insensitive and matches partial names. Returns full paths to all matching items. Great for finding files when you don't know their exact location. Only searches within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "excludePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "path",
+            "pattern"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "get_file_info",
+        "description": "Retrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type. This tool is perfect for understanding file characteristics without reading the actual content. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "list_allowed_directories",
+        "description": "Returns the list of directories that this server is allowed to access. Use this to understand which directories are available before trying to access files.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 4
+}
+✅ filesystem initialized with 12 tools
+🔧 registerServiceTools called for filesystem with 12 tools. Current registered count: 9
+🎯 Tracked 12 tools for service filesystem. Total unique tools: 21
+🔧 Starting git service...
+[2025-07-26T06:30:28.394Z] [MCP_OUT] → git
+[2025-07-26T06:30:28.394Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[2025-07-26T06:30:30.081Z] [MCP_IN] ← git
+[2025-07-26T06:30:30.081Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "logging": {},
+      "resources": {
+        "listChanged": true
+      },
+      "tools": {
+        "listChanged": true
+      }
+    },
+    "serverInfo": {
+      "name": "@cyanheads/git-mcp-server",
+      "version": "2.1.8"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 5
+}
+[2025-07-26T06:30:30.082Z] [MCP_OUT] → git
+[2025-07-26T06:30:30.082Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:30.087Z] [MCP_IN] ← git
+[2025-07-26T06:30:30.087Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "git_add",
+        "description": "Stages changes in the Git repository for the next commit by adding file contents to the index (staging area). Can stage specific files/patterns or all changes (default: '.'). Returns the result as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "files": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ],
+              "default": ".",
+              "description": "Files or patterns to stage, defaults to all changes ('.')"
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_branch",
+        "description": "Manages Git branches. Supports listing (local, remote, all), creating, deleting (with force), renaming (with force), and showing the current branch. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "list",
+                "create",
+                "delete",
+                "rename",
+                "show-current"
+              ],
+              "description": "The branch operation to perform: 'list', 'create', 'delete', 'rename', 'show-current'."
+            },
+            "branchName": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The name of the branch (e.g., 'feat/new-login', 'main'). Required for 'create', 'delete', 'rename' modes."
+            },
+            "newBranchName": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The new name for the branch (e.g., 'fix/typo-in-readme'). Required for 'rename' mode."
+            },
+            "startPoint": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional commit hash, tag, or existing branch name (e.g., 'main', 'v1.0.0', 'commit-hash') to start the new branch from. Used only in 'create' mode. Defaults to HEAD."
+            },
+            "force": {
+              "type": "boolean",
+              "default": false,
+              "description": "Force the operation. Use -D for delete, -M for rename, -f for create (if branch exists). Use with caution, as forcing operations can lead to data loss."
+            },
+            "all": {
+              "type": "boolean",
+              "default": false,
+              "description": "List both local and remote-tracking branches. Used only in 'list' mode."
+            },
+            "remote": {
+              "type": "boolean",
+              "default": false,
+              "description": "Act on remote-tracking branches. Used with 'list' (-r) or 'delete' (-r)."
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_checkout",
+        "description": "Switches branches or restores working tree files. Can checkout branches, commits, tags, or specific file paths. Supports creating new branches and forcing checkout.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "branchOrPath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The branch name (e.g., 'main'), commit hash, tag, or file path(s) (e.g., './src/file.ts') to checkout."
+            },
+            "newBranch": {
+              "type": "string",
+              "description": "Create a new branch named <new_branch> (e.g., 'feat/new-feature') and start it at <branchOrPath>."
+            },
+            "force": {
+              "type": "boolean",
+              "default": false,
+              "description": "Force checkout even if there are uncommitted changes (use with caution, discards local changes)."
+            }
+          },
+          "required": [
+            "branchOrPath"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_cherry_pick",
+        "description": "Applies the changes introduced by existing commits. Supports picking single commits or ranges, handling merge commits, and options like --no-commit and --signoff. Returns results as a JSON object, indicating success, failure, or conflicts.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "commitRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The commit reference(s) to cherry-pick (e.g., 'hash1', 'hash1..hash3', 'branchName~3..branchName')."
+            },
+            "mainline": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Specify the parent number (starting from 1) when cherry-picking a merge commit."
+            },
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "recursive",
+                "resolve",
+                "ours",
+                "theirs",
+                "octopus",
+                "subtree"
+              ],
+              "description": "Specifies a merge strategy *option* (passed via -X)."
+            },
+            "noCommit": {
+              "type": "boolean",
+              "default": false,
+              "description": "Apply the changes but do not create a commit."
+            },
+            "signoff": {
+              "type": "boolean",
+              "default": false,
+              "description": "Add a Signed-off-by line to the commit message."
+            }
+          },
+          "required": [
+            "commitRef"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_clean",
+        "description": "Removes untracked files from the working directory. Supports dry runs, removing directories, and removing ignored files. CRITICAL: Requires explicit `force: true` parameter for safety as this is a destructive operation. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "force": {
+              "type": "boolean",
+              "description": "REQUIRED confirmation to run the command. Must be explicitly set to true to perform the clean operation. If false or omitted, the command will not run."
+            },
+            "dryRun": {
+              "type": "boolean",
+              "default": false,
+              "description": "Show what would be deleted without actually deleting (-n flag)."
+            },
+            "directories": {
+              "type": "boolean",
+              "default": false,
+              "description": "Remove untracked directories in addition to files (-d flag)."
+            },
+            "ignored": {
+              "type": "boolean",
+              "default": false,
+              "description": "Remove ignored files as well (-x flag). Use with extreme caution."
+            }
+          },
+          "required": [
+            "force"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_clear_working_dir",
+        "description": "Clears the session-specific working directory previously set by `git_set_working_dir`. Subsequent Git tool calls in this session will require an explicit `path` parameter or will default to the server's current working directory. Returns the result as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_clone",
+        "description": "Clones a Git repository from a given URL into a specified absolute directory path. Supports cloning specific branches and setting clone depth.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repositoryUrl": {
+              "type": "string",
+              "format": "uri",
+              "description": "The URL of the repository to clone (e.g., https://github.com/cyanheads/git-mcp-server, git@github.com:cyanheads/git-mcp-server.git)."
+            },
+            "targetPath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The absolute path to the directory where the repository should be cloned."
+            },
+            "branch": {
+              "type": "string",
+              "description": "Specify a specific branch to checkout after cloning."
+            },
+            "depth": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "Create a shallow clone with a history truncated to the specified number of commits."
+            },
+            "quiet": {
+              "type": "boolean",
+              "default": false,
+              "description": "Operate quietly. Progress is not reported to the standard error stream."
+            }
+          },
+          "required": [
+            "repositoryUrl",
+            "targetPath"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_commit",
+        "description": "Commits staged changes to the Git repository index with a descriptive message. Supports author override, amending, and empty commits. Returns a JSON result.\n\n**Commit Message Guidance:**\nWrite clear, concise commit messages using the Conventional Commits format: `type(scope): subject`.\n- `type`: feat, fix, docs, style, refactor, test, chore, etc.\n- `(scope)`: Optional context (e.g., `auth`, `ui`, filename).\n- `subject`: Imperative, present tense description (e.g., \"add login button\", not \"added login button\").\n\nI want to understand what you did and why. Use the body for detailed explanations, if necessary.\n\n**Example Commit Message:**\n```\nfeat(auth): implement password reset endpoint\n\n- Adds the /api/auth/reset-password endpoint to allow users to reset their password via an email link. \n- Includes input validation and rate limiting.\n\nCloses #123 (if applicable).\n```\n\n**Tool Options & Behavior:**\n- Commit related changes logically. Use the optional `filesToStage` parameter to auto-stage specific files before committing.\n- The `path` defaults to the session's working directory unless overridden. If `GIT_SIGN_COMMITS=true` is set, commits are signed (`-S`), with an optional `forceUnsignedOnFailure` fallback.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Commit message. Follow Conventional Commits format: `type(scope): subject`. Example: `feat(api): add user signup endpoint`"
+            },
+            "author": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Author name for the commit"
+                },
+                "email": {
+                  "type": "string",
+                  "format": "email",
+                  "description": "Author email for the commit"
+                }
+              },
+              "required": [
+                "name",
+                "email"
+              ],
+              "additionalProperties": false,
+              "description": "Overrides the commit author information (name and email). Use only when necessary (e.g., applying external patches)."
+            },
+            "allowEmpty": {
+              "type": "boolean",
+              "default": false,
+              "description": "Allow creating empty commits"
+            },
+            "amend": {
+              "type": "boolean",
+              "default": false,
+              "description": "Amend the previous commit instead of creating a new one"
+            },
+            "forceUnsignedOnFailure": {
+              "type": "boolean",
+              "default": false,
+              "description": "If true and signing is enabled but fails, attempt the commit without signing instead of failing."
+            },
+            "filesToStage": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Optional array of specific file paths (relative to the repository root) to stage automatically before committing. If provided, only these files will be staged."
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_diff",
+        "description": "Shows changes between commits, commit and working tree, etc. Can show staged changes or diff specific files. An optional 'includeUntracked' parameter (boolean) can be used to also show the content of untracked files. Returns the diff output as plain text.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "commit1": {
+              "type": "string",
+              "description": "First commit, branch, or ref for comparison. If omitted, compares against the working tree or index (depending on 'staged')."
+            },
+            "commit2": {
+              "type": "string",
+              "description": "Second commit, branch, or ref for comparison. If omitted, compares commit1 against the working tree or index."
+            },
+            "staged": {
+              "type": "boolean",
+              "default": false,
+              "description": "Show diff of changes staged for the next commit (compares index against HEAD). Overrides commit1/commit2 if true."
+            },
+            "file": {
+              "type": "string",
+              "description": "Limit the diff output to a specific file path."
+            },
+            "includeUntracked": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include untracked files in the diff output (shows their full content as new files). This is a non-standard extension."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_fetch",
+        "description": "Downloads objects and refs from one or more other repositories. Can fetch specific remotes or all, prune stale branches, and fetch tags.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "remote": {
+              "type": "string",
+              "description": "The remote repository to fetch from (e.g., 'origin'). If omitted, fetches from 'origin' or the default configured remote."
+            },
+            "prune": {
+              "type": "boolean",
+              "default": false,
+              "description": "Before fetching, remove any remote-tracking references that no longer exist on the remote."
+            },
+            "tags": {
+              "type": "boolean",
+              "default": false,
+              "description": "Fetch all tags from the remote (in addition to whatever else is fetched)."
+            },
+            "all": {
+              "type": "boolean",
+              "default": false,
+              "description": "Fetch all remotes."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_init",
+        "description": "Initializes a new Git repository at the specified path. If path is relative or omitted, it resolves against the session working directory (if you have set the git_working_dir). Can optionally set the initial branch name and create a bare repository.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": "."
+            },
+            "initialBranch": {
+              "type": "string",
+              "description": "Optional name for the initial branch (e.g., 'main'). Uses Git's default if not specified."
+            },
+            "bare": {
+              "type": "boolean",
+              "default": false,
+              "description": "Create a bare repository (no working directory)."
+            },
+            "quiet": {
+              "type": "boolean",
+              "default": false,
+              "description": "Only print error and warning messages; all other output will be suppressed."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_log",
+        "description": "Shows commit logs for the repository. Supports limiting count, filtering by author, date range, and specific branch/file. Returns a JSON object containing a list of commit objects (`commits` array) by default. If `showSignature: true` is used, it returns a JSON object where the `commits` array is empty and the raw signature verification output is included in the `message` field.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "maxCount": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "Limit the number of commits to output."
+            },
+            "author": {
+              "type": "string",
+              "description": "Limit commits to those matching the specified author pattern."
+            },
+            "since": {
+              "type": "string",
+              "description": "Show commits more recent than a specific date (e.g., '2 weeks ago', '2023-01-01')."
+            },
+            "until": {
+              "type": "string",
+              "description": "Show commits older than a specific date."
+            },
+            "branchOrFile": {
+              "type": "string",
+              "description": "Show logs for a specific branch (e.g., 'main'), tag, or file path (e.g., 'src/utils/logger.ts')."
+            },
+            "showSignature": {
+              "type": "boolean",
+              "default": false,
+              "description": "Show signature verification status for commits. Returns raw output instead of parsed JSON."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_merge",
+        "description": "Merges the specified branch into the current branch. Supports options like --no-ff, --squash, and --abort. Returns the merge result as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "branch": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The name of the branch to merge into the current branch."
+            },
+            "commitMessage": {
+              "type": "string",
+              "description": "Commit message to use for the merge commit (if required, e.g., not fast-forward)."
+            },
+            "noFf": {
+              "type": "boolean",
+              "default": false,
+              "description": "Create a merge commit even when the merge resolves as a fast-forward (`--no-ff`)."
+            },
+            "squash": {
+              "type": "boolean",
+              "default": false,
+              "description": "Combine merged changes into a single commit (`--squash`). Requires manual commit afterwards."
+            },
+            "abort": {
+              "type": "boolean",
+              "default": false,
+              "description": "Abort the current merge process (resolves conflicts)."
+            }
+          },
+          "required": [
+            "branch"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_pull",
+        "description": "Fetches from and integrates with another repository or a local branch (e.g., 'git pull origin main'). Supports rebase and fast-forward only options. Returns the pull result as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "remote": {
+              "type": "string",
+              "description": "The remote repository to pull from (e.g., 'origin'). Defaults to the tracked upstream or 'origin'."
+            },
+            "branch": {
+              "type": "string",
+              "description": "The remote branch to pull (e.g., 'main'). Defaults to the current branch's upstream."
+            },
+            "rebase": {
+              "type": "boolean",
+              "default": false,
+              "description": "Use 'git pull --rebase' instead of merge."
+            },
+            "ffOnly": {
+              "type": "boolean",
+              "default": false,
+              "description": "Use '--ff-only' to only allow fast-forward merges."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_push",
+        "description": "Updates remote refs using local refs, sending objects necessary to complete the given refs. Supports pushing specific branches, tags, forcing, setting upstream, and deleting remote branches. Returns the push result as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "remote": {
+              "type": "string",
+              "description": "The remote repository to push to (e.g., 'origin'). Defaults to the tracked upstream or 'origin'."
+            },
+            "branch": {
+              "type": "string",
+              "description": "The local branch to push (e.g., 'main', 'feat/new-login'). Defaults to the current branch."
+            },
+            "remoteBranch": {
+              "type": "string",
+              "description": "The remote branch to push to (e.g., 'main', 'develop'). Defaults to the same name as the local branch."
+            },
+            "force": {
+              "type": "boolean",
+              "default": false,
+              "description": "Force the push (use with caution: `--force-with-lease` is generally safer)."
+            },
+            "forceWithLease": {
+              "type": "boolean",
+              "default": false,
+              "description": "Force the push only if the remote ref is the expected value (`--force-with-lease`). Safer than --force."
+            },
+            "setUpstream": {
+              "type": "boolean",
+              "default": false,
+              "description": "Set the upstream tracking configuration (`-u` or `--set-upstream`)."
+            },
+            "tags": {
+              "type": "boolean",
+              "default": false,
+              "description": "Push all tags (`--tags`)."
+            },
+            "delete": {
+              "type": "boolean",
+              "default": false,
+              "description": "Delete the remote branch (`--delete`). Requires `branch` to be specified. Use with caution, as deleting remote branches can affect collaborators."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_rebase",
+        "description": "Reapplies commits on top of another base tip. Supports starting a rebase (standard or interactive), continuing, aborting, or skipping steps in an ongoing rebase. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "start",
+                "continue",
+                "abort",
+                "skip"
+              ],
+              "default": "start",
+              "description": "Rebase operation mode: 'start' (initiate rebase), 'continue', 'abort', 'skip' (manage ongoing rebase)."
+            },
+            "upstream": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The upstream branch or commit to rebase onto. Required for 'start' mode unless 'interactive' is true with default base."
+            },
+            "branch": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The branch to rebase. Defaults to the current branch if omitted."
+            },
+            "interactive": {
+              "type": "boolean",
+              "default": false,
+              "description": "Perform an interactive rebase (`-i`). 'upstream' can be omitted to rebase current branch's tracked upstream or use fork-point."
+            },
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "recursive",
+                "resolve",
+                "ours",
+                "theirs",
+                "octopus",
+                "subtree"
+              ],
+              "description": "Specifies the merge strategy to use during rebase."
+            },
+            "strategyOption": {
+              "type": "string",
+              "description": "Pass a specific option to the merge strategy (e.g., 'ours', 'theirs' for recursive). Use with -X."
+            },
+            "onto": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Rebase onto a specific commit/branch instead of the upstream's base. Requires 'upstream' to be specified."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_remote",
+        "description": "Manages remote repositories (list, add, remove, show).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "list",
+                "add",
+                "remove",
+                "show"
+              ],
+              "description": "Operation mode: 'list', 'add', 'remove', 'show'"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Remote name (required for 'add', 'remove', 'show')"
+            },
+            "url": {
+              "type": "string",
+              "description": "Remote URL (required for 'add')"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_reset",
+        "description": "Resets the current HEAD to a specified state. Supports different modes ('soft', 'mixed', 'hard', 'merge', 'keep') to control how the index and working tree are affected. Can reset to a specific commit. USE 'hard' MODE WITH EXTREME CAUTION as it discards local changes.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "soft",
+                "mixed",
+                "hard",
+                "merge",
+                "keep"
+              ],
+              "default": "mixed",
+              "description": "Reset mode: 'soft' (reset HEAD only), 'mixed' (reset HEAD and index, default), 'hard' (reset HEAD, index, and working tree - USE WITH CAUTION), 'merge', 'keep'."
+            },
+            "commit": {
+              "type": "string",
+              "description": "Commit, branch, or ref to reset to. Defaults to HEAD (useful for unstaging with 'mixed' mode)."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_set_working_dir",
+        "description": "Sets the default working directory for the current session. Subsequent Git tool calls within this session can use '.' for the `path` parameter, which will resolve to this directory. Optionally validates if the path is a Git repository (`validateGitRepo: true`). Can optionally initialize a Git repository with 'git init' if it's not already one and `initializeIfNotPresent: true` is set. Returns the result as a JSON object. IMPORTANT: The provided path must be absolute.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The absolute path to set as the default working directory for the current session. Set this before using other git_* tools."
+            },
+            "validateGitRepo": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to validate that the path is a Git repository"
+            },
+            "initializeIfNotPresent": {
+              "type": "boolean",
+              "default": false,
+              "description": "If true and the directory is not a Git repository, attempt to initialize it with 'git init'."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_show",
+        "description": "Shows information about Git objects (commits, tags, blobs, trees) based on a reference. Can optionally show the content of a specific file at that reference. Returns the raw output.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The object reference (commit hash, tag name, branch name, HEAD, etc.) to show."
+            },
+            "filePath": {
+              "type": "string",
+              "description": "Optional specific file path within the ref to show (e.g., show a file's content at a specific commit). If provided, use the format '<ref>:<filePath>'."
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_stash",
+        "description": "Manages stashed changes in the working directory. Supports listing stashes, applying/popping specific stashes (with conflict detection), dropping stashes, and saving current changes to a new stash with an optional message. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "list",
+                "apply",
+                "pop",
+                "drop",
+                "save"
+              ],
+              "description": "The stash operation to perform: 'list', 'apply', 'pop', 'drop', 'save'."
+            },
+            "stashRef": {
+              "type": "string",
+              "description": "Stash reference (e.g., 'stash@{1}'). Required for 'apply', 'pop', 'drop' modes."
+            },
+            "message": {
+              "type": "string",
+              "description": "Optional descriptive message used only for 'save' mode."
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_status",
+        "description": "Retrieves the status of a Git repository. Returns a JSON object detailing the current branch, cleanliness, and changes. Staged and unstaged changes are grouped by status (e.g., Added, Modified), alongside lists of untracked and conflicted files.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_tag",
+        "description": "Manages Git tags. Supports listing existing tags, creating new lightweight or annotated tags against specific commits, and deleting local tags. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "list",
+                "create",
+                "delete"
+              ],
+              "description": "The tag operation to perform: 'list' (show all tags), 'create' (add a new tag), 'delete' (remove a local tag)."
+            },
+            "tagName": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The name for the tag. Required for 'create' and 'delete' modes. e.g., 'v2.3.0'."
+            },
+            "message": {
+              "type": "string",
+              "description": "The annotation message for the tag. Required and used only when 'mode' is 'create' and 'annotate' is true."
+            },
+            "commitRef": {
+              "type": "string",
+              "description": "The commit hash, branch name, or other reference to tag. Used only in 'create' mode. Defaults to the current HEAD if omitted."
+            },
+            "annotate": {
+              "type": "boolean",
+              "default": false,
+              "description": "If true, creates an annotated tag (-a flag) instead of a lightweight tag. Requires 'message' to be provided. Used only in 'create' mode."
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_worktree",
+        "description": "Manages Git worktrees. Supports listing, adding, removing, moving, and pruning worktrees. Returns results as a JSON object.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "default": ".",
+              "description": "Path to the local Git repository. Defaults to the directory set via `git_set_working_dir` for the session; set 'git_set_working_dir' if not set."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "list",
+                "add",
+                "remove",
+                "move",
+                "prune"
+              ],
+              "description": "The worktree operation to perform: 'list', 'add', 'remove', 'move', 'prune'."
+            },
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Path of the worktree. Required for 'add', 'remove', 'move' modes."
+            },
+            "commitish": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Branch or commit to checkout in the new worktree. Used only in 'add' mode. Defaults to HEAD."
+            },
+            "newBranch": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Create a new branch in the worktree. Used only in 'add' mode."
+            },
+            "force": {
+              "type": "boolean",
+              "default": false,
+              "description": "Force the operation (e.g., for 'add' if branch exists, or 'remove' if uncommitted changes)."
+            },
+            "detach": {
+              "type": "boolean",
+              "default": false,
+              "description": "Detach HEAD in the new worktree. Used only in 'add' mode."
+            },
+            "newPath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The new path for the worktree. Required for 'move' mode."
+            },
+            "verbose": {
+              "type": "boolean",
+              "default": false,
+              "description": "Provide more detailed output. Used in 'list' and 'prune' modes."
+            },
+            "dryRun": {
+              "type": "boolean",
+              "default": false,
+              "description": "Show what would be done without actually doing it. Used in 'prune' mode."
+            },
+            "expire": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Prune entries older than this time (e.g., '1.month.ago'). Used in 'prune' mode."
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      {
+        "name": "git_wrapup_instructions",
+        "description": "Provides a standard Git wrap-up workflow. This involves reviewing changes with `git_diff`, updating documentation (README, CHANGELOG), and making logical, descriptive commits using the `git_commit` tool. The tool's response also includes the current `git status` output. You should set the working directory using `git_set_working_dir` before running this tool.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "acknowledgement": {
+              "type": "string",
+              "enum": [
+                "Y",
+                "y",
+                "Yes",
+                "yes"
+              ],
+              "description": "Acknowledgement that you have permission (implicit allowed, explicit preferred) from the user to initiate this tool. Must be \"Y\" or \"Yes\" (case-insensitive)."
+            },
+            "updateAgentMetaFiles": {
+              "type": "string",
+              "enum": [
+                "Y",
+                "y",
+                "Yes",
+                "yes"
+              ],
+              "description": "If set to 'Y' or 'Yes', include an extra instruction to review and update agent-specific meta files like .clinerules or claude.md if present. Only use this if the user explicitly requested it."
+            }
+          },
+          "required": [
+            "acknowledgement"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 6
+}
+✅ git initialized with 25 tools
+🔧 registerServiceTools called for git with 25 tools. Current registered count: 21
+🎯 Tracked 25 tools for service git. Total unique tools: 46
+🔧 Starting fetch service...
+[2025-07-26T06:30:30.094Z] [MCP_OUT] → fetch
+[2025-07-26T06:30:30.094Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[2025-07-26T06:30:30.976Z] [MCP_IN] ← fetch
+[2025-07-26T06:30:30.976Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "resources": {},
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "@tokenizin/mcp-npx-fetch",
+      "version": "0.13.37"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 7
+}
+[2025-07-26T06:30:30.976Z] [MCP_OUT] → fetch
+[2025-07-26T06:30:30.976Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:30.977Z] [MCP_IN] ← fetch
+[2025-07-26T06:30:30.977Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "fetch_html",
+        "description": "Fetch a website and return the content as HTML",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL of the website to fetch"
+            },
+            "headers": {
+              "type": "object",
+              "description": "Optional headers to include in the request"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "fetch_markdown",
+        "description": "Fetch a website and return the content as Markdown",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL of the website to fetch"
+            },
+            "headers": {
+              "type": "object",
+              "description": "Optional headers to include in the request"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "fetch_txt",
+        "description": "Fetch a website, return the content as plain text (no HTML)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL of the website to fetch"
+            },
+            "headers": {
+              "type": "object",
+              "description": "Optional headers to include in the request"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "fetch_json",
+        "description": "Fetch a JSON file from a URL",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL of the JSON to fetch"
+            },
+            "headers": {
+              "type": "object",
+              "description": "Optional headers to include in the request"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 8
+}
+✅ fetch initialized with 4 tools
+🔧 registerServiceTools called for fetch with 4 tools. Current registered count: 46
+🎯 Tracked 4 tools for service fetch. Total unique tools: 50
+🔧 Starting playwright service...
+[2025-07-26T06:30:30.983Z] [MCP_OUT] → playwright
+[2025-07-26T06:30:30.983Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[2025-07-26T06:30:32.310Z] [MCP_IN] ← playwright
+[2025-07-26T06:30:32.310Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "resources": {},
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "playwright-mcp",
+      "version": "1.0.6"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 9
+}
+[2025-07-26T06:30:32.311Z] [MCP_OUT] → playwright
+[2025-07-26T06:30:32.311Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:32.312Z] [MCP_IN] ← playwright
+[2025-07-26T06:30:32.312Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "start_codegen_session",
+        "description": "Start a new code generation session to record Playwright actions",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "options": {
+              "type": "object",
+              "description": "Code generation options",
+              "properties": {
+                "outputPath": {
+                  "type": "string",
+                  "description": "Directory path where generated tests will be saved (use absolute path)"
+                },
+                "testNamePrefix": {
+                  "type": "string",
+                  "description": "Prefix to use for generated test names (default: 'GeneratedTest')"
+                },
+                "includeComments": {
+                  "type": "boolean",
+                  "description": "Whether to include descriptive comments in generated tests"
+                }
+              },
+              "required": [
+                "outputPath"
+              ]
+            }
+          },
+          "required": [
+            "options"
+          ]
+        }
+      },
+      {
+        "name": "end_codegen_session",
+        "description": "End a code generation session and generate the test file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "ID of the session to end"
+            }
+          },
+          "required": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "name": "get_codegen_session",
+        "description": "Get information about a code generation session",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "ID of the session to retrieve"
+            }
+          },
+          "required": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "name": "clear_codegen_session",
+        "description": "Clear a code generation session without generating a test",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "ID of the session to clear"
+            }
+          },
+          "required": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "name": "playwright_navigate",
+        "description": "Navigate to a URL",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to navigate to the website specified"
+            },
+            "browserType": {
+              "type": "string",
+              "description": "Browser type to use (chromium, firefox, webkit). Defaults to chromium",
+              "enum": [
+                "chromium",
+                "firefox",
+                "webkit"
+              ]
+            },
+            "width": {
+              "type": "number",
+              "description": "Viewport width in pixels (default: 1280)"
+            },
+            "height": {
+              "type": "number",
+              "description": "Viewport height in pixels (default: 720)"
+            },
+            "timeout": {
+              "type": "number",
+              "description": "Navigation timeout in milliseconds"
+            },
+            "waitUntil": {
+              "type": "string",
+              "description": "Navigation wait condition"
+            },
+            "headless": {
+              "type": "boolean",
+              "description": "Run browser in headless mode (default: false)"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "playwright_screenshot",
+        "description": "Take a screenshot of the current page or a specific element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name for the screenshot"
+            },
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for element to screenshot"
+            },
+            "width": {
+              "type": "number",
+              "description": "Width in pixels (default: 800)"
+            },
+            "height": {
+              "type": "number",
+              "description": "Height in pixels (default: 600)"
+            },
+            "storeBase64": {
+              "type": "boolean",
+              "description": "Store screenshot in base64 format (default: true)"
+            },
+            "fullPage": {
+              "type": "boolean",
+              "description": "Store screenshot of the entire page (default: false)"
+            },
+            "savePng": {
+              "type": "boolean",
+              "description": "Save screenshot as PNG file (default: false)"
+            },
+            "downloadsDir": {
+              "type": "string",
+              "description": "Custom downloads directory path (default: user's Downloads folder)"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "name": "playwright_click",
+        "description": "Click an element on the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the element to click"
+            }
+          },
+          "required": [
+            "selector"
+          ]
+        }
+      },
+      {
+        "name": "playwright_iframe_click",
+        "description": "Click an element in an iframe on the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "iframeSelector": {
+              "type": "string",
+              "description": "CSS selector for the iframe containing the element to click"
+            },
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the element to click"
+            }
+          },
+          "required": [
+            "iframeSelector",
+            "selector"
+          ]
+        }
+      },
+      {
+        "name": "playwright_iframe_fill",
+        "description": "Fill an element in an iframe on the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "iframeSelector": {
+              "type": "string",
+              "description": "CSS selector for the iframe containing the element to fill"
+            },
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the element to fill"
+            },
+            "value": {
+              "type": "string",
+              "description": "Value to fill"
+            }
+          },
+          "required": [
+            "iframeSelector",
+            "selector",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_fill",
+        "description": "fill out an input field",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for input field"
+            },
+            "value": {
+              "type": "string",
+              "description": "Value to fill"
+            }
+          },
+          "required": [
+            "selector",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_select",
+        "description": "Select an element on the page with Select tag",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for element to select"
+            },
+            "value": {
+              "type": "string",
+              "description": "Value to select"
+            }
+          },
+          "required": [
+            "selector",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_hover",
+        "description": "Hover an element on the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for element to hover"
+            }
+          },
+          "required": [
+            "selector"
+          ]
+        }
+      },
+      {
+        "name": "playwright_upload_file",
+        "description": "Upload a file to an input[type='file'] element on the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the file input element"
+            },
+            "filePath": {
+              "type": "string",
+              "description": "Absolute path to the file to upload"
+            }
+          },
+          "required": [
+            "selector",
+            "filePath"
+          ]
+        }
+      },
+      {
+        "name": "playwright_evaluate",
+        "description": "Execute JavaScript in the browser console",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "script": {
+              "type": "string",
+              "description": "JavaScript code to execute"
+            }
+          },
+          "required": [
+            "script"
+          ]
+        }
+      },
+      {
+        "name": "playwright_console_logs",
+        "description": "Retrieve console logs from the browser with filtering options",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Type of logs to retrieve (all, error, warning, log, info, debug, exception)",
+              "enum": [
+                "all",
+                "error",
+                "warning",
+                "log",
+                "info",
+                "debug",
+                "exception"
+              ]
+            },
+            "search": {
+              "type": "string",
+              "description": "Text to search for in logs (handles text with square brackets)"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of logs to return"
+            },
+            "clear": {
+              "type": "boolean",
+              "description": "Whether to clear logs after retrieval (default: false)"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_close",
+        "description": "Close the browser and release all resources",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_get",
+        "description": "Perform an HTTP GET request",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to perform GET operation"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "playwright_post",
+        "description": "Perform an HTTP POST request",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to perform POST operation"
+            },
+            "value": {
+              "type": "string",
+              "description": "Data to post in the body"
+            },
+            "token": {
+              "type": "string",
+              "description": "Bearer token for authorization"
+            },
+            "headers": {
+              "type": "object",
+              "description": "Additional headers to include in the request",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "url",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_put",
+        "description": "Perform an HTTP PUT request",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to perform PUT operation"
+            },
+            "value": {
+              "type": "string",
+              "description": "Data to PUT in the body"
+            }
+          },
+          "required": [
+            "url",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_patch",
+        "description": "Perform an HTTP PATCH request",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to perform PUT operation"
+            },
+            "value": {
+              "type": "string",
+              "description": "Data to PATCH in the body"
+            }
+          },
+          "required": [
+            "url",
+            "value"
+          ]
+        }
+      },
+      {
+        "name": "playwright_delete",
+        "description": "Perform an HTTP DELETE request",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL to perform DELETE operation"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "playwright_expect_response",
+        "description": "Ask Playwright to start waiting for a HTTP response. This tool initiates the wait operation but does not wait for its completion.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique & arbitrary identifier to be used for retrieving this response later with `Playwright_assert_response`."
+            },
+            "url": {
+              "type": "string",
+              "description": "URL pattern to match in the response."
+            }
+          },
+          "required": [
+            "id",
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "playwright_assert_response",
+        "description": "Wait for and validate a previously initiated HTTP response wait operation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Identifier of the HTTP response initially expected using `Playwright_expect_response`."
+            },
+            "value": {
+              "type": "string",
+              "description": "Data to expect in the body of the HTTP response. If provided, the assertion will fail if this value is not found in the response body."
+            }
+          },
+          "required": [
+            "id"
+          ]
+        }
+      },
+      {
+        "name": "playwright_custom_user_agent",
+        "description": "Set a custom User Agent for the browser",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "userAgent": {
+              "type": "string",
+              "description": "Custom User Agent for the Playwright browser instance"
+            }
+          },
+          "required": [
+            "userAgent"
+          ]
+        }
+      },
+      {
+        "name": "playwright_get_visible_text",
+        "description": "Get the visible text content of the current page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_get_visible_html",
+        "description": "Get the HTML content of the current page. By default, all <script> tags are removed from the output unless removeScripts is explicitly set to false.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector to limit the HTML to a specific container"
+            },
+            "removeScripts": {
+              "type": "boolean",
+              "description": "Remove all script tags from the HTML (default: true)"
+            },
+            "removeComments": {
+              "type": "boolean",
+              "description": "Remove all HTML comments (default: false)"
+            },
+            "removeStyles": {
+              "type": "boolean",
+              "description": "Remove all style tags from the HTML (default: false)"
+            },
+            "removeMeta": {
+              "type": "boolean",
+              "description": "Remove all meta tags from the HTML (default: false)"
+            },
+            "cleanHtml": {
+              "type": "boolean",
+              "description": "Perform comprehensive HTML cleaning (default: false)"
+            },
+            "minify": {
+              "type": "boolean",
+              "description": "Minify the HTML output (default: false)"
+            },
+            "maxLength": {
+              "type": "number",
+              "description": "Maximum number of characters to return (default: 20000)"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_go_back",
+        "description": "Navigate back in browser history",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_go_forward",
+        "description": "Navigate forward in browser history",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "playwright_drag",
+        "description": "Drag an element to a target location",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sourceSelector": {
+              "type": "string",
+              "description": "CSS selector for the element to drag"
+            },
+            "targetSelector": {
+              "type": "string",
+              "description": "CSS selector for the target location"
+            }
+          },
+          "required": [
+            "sourceSelector",
+            "targetSelector"
+          ]
+        }
+      },
+      {
+        "name": "playwright_press_key",
+        "description": "Press a keyboard key",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "Key to press (e.g. 'Enter', 'ArrowDown', 'a')"
+            },
+            "selector": {
+              "type": "string",
+              "description": "Optional CSS selector to focus before pressing key"
+            }
+          },
+          "required": [
+            "key"
+          ]
+        }
+      },
+      {
+        "name": "playwright_save_as_pdf",
+        "description": "Save the current page as a PDF file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "outputPath": {
+              "type": "string",
+              "description": "Directory path where PDF will be saved"
+            },
+            "filename": {
+              "type": "string",
+              "description": "Name of the PDF file (default: page.pdf)"
+            },
+            "format": {
+              "type": "string",
+              "description": "Page format (e.g. 'A4', 'Letter')"
+            },
+            "printBackground": {
+              "type": "boolean",
+              "description": "Whether to print background graphics"
+            },
+            "margin": {
+              "type": "object",
+              "description": "Page margins",
+              "properties": {
+                "top": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                },
+                "bottom": {
+                  "type": "string"
+                },
+                "left": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "required": [
+            "outputPath"
+          ]
+        }
+      },
+      {
+        "name": "playwright_click_and_switch_tab",
+        "description": "Click a link and switch to the newly opened tab",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the link to click"
+            }
+          },
+          "required": [
+            "selector"
+          ]
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 10
+}
+✅ playwright initialized with 32 tools
+🔧 registerServiceTools called for playwright with 32 tools. Current registered count: 50
+🎯 Tracked 32 tools for service playwright. Total unique tools: 82
+🔧 Starting dbhub service...
+[2025-07-26T06:30:32.319Z] [MCP_OUT] → dbhub
+[2025-07-26T06:30:32.319Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "dynamic-mcp-bridge",
+      "version": "1.0.0"
+    }
+  }
+}
+[dbhub] Connecting with DSN: mysql://root:*******@192.168.113.2:3306/asp?sslmode=disable
+[dbhub] DSN source: command line argument
+[dbhub] Successfully connected to MySQL database
+[dbhub] Using transport: stdio
+[dbhub] Transport source: command line argument
+[dbhub] _____  ____  _   _       _     
+|  __ \|  _ \| | | |     | |    
+| |  | | |_) | |_| |_   _| |__  
+| |  | |  _ <|  _  | | | | '_ \ 
+| |__| | |_) | | | | |_| | |_) |
+|_____/|____/|_| |_|\__,_|_.__/ 
+                                
+v0.10.0 - Universal Database MCP Server
+[dbhub] Starting with STDIO transport
+[2025-07-26T06:30:33.664Z] [MCP_IN] ← dbhub
+[2025-07-26T06:30:33.664Z] [MCP_IN] Data: {
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "resources": {
+        "listChanged": true
+      },
+      "completions": {},
+      "tools": {
+        "listChanged": true
+      },
+      "prompts": {
+        "listChanged": true
+      }
+    },
+    "serverInfo": {
+      "name": "DBHub MCP Server",
+      "version": "0.10.0"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 11
+}
+[2025-07-26T06:30:33.664Z] [MCP_OUT] → dbhub
+[2025-07-26T06:30:33.664Z] [MCP_OUT] Data: {
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "tools/list",
+  "params": {}
+}
+[2025-07-26T06:30:33.666Z] [MCP_IN] ← dbhub
+[2025-07-26T06:30:33.666Z] [MCP_IN] Data: {
+  "result": {
+    "tools": [
+      {
+        "name": "execute_sql",
+        "description": "Execute a SQL query on the current database",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": {
+              "type": "string",
+              "description": "SQL query or multiple SQL statements to execute (separated by semicolons)"
+            }
+          },
+          "required": [
+            "sql"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 12
+}
+✅ dbhub initialized with 1 tools
+🔧 registerServiceTools called for dbhub with 1 tools. Current registered count: 82
+🎯 Tracked 1 tools for service dbhub. Total unique tools: 83
+🎉 All services started! Tools registered dynamically.
+🎯 Total tools registered with MCP server: 83
+✅ Registered 83 tools for new server instance
+✅ Persistent MCP server and transport initialized
+Launcher Proxy Service initialized
+  ✅ Launcher Proxy Service ready
+  🔐 Initializing OAuth Proxy Service...
+OAuth Proxy Service initialized
+  ✅ OAuth Proxy Service ready
+  🔀 Initializing OpenID Connect Router...
+Connected to Redis at localhost:6379
+Redis client connected successfully
+OpenID Connect Router initialized
+- OpenID Connect middleware ready
+- Static file serving ready
+- Redis session storage ready
+  ✅ OpenID Connect Router ready
+✅ All services initialized successfully
+✅ Services ready
+registered routes
+GET /health
+GET ^/oauth/callback
+POST ^/logout
+GET ^/.well-known/oauth-authorization-server
+GET ^/.well-known/openid-configuration
+GET ^/docs
+GET ^/oauth/api-docs.html
+GET ^/.well-known/oauth-protected-resource
+GET ^/.well-known/oauth-protected-resource/mcp/*
+GET ^/oauth/oauth-protected-resource-discovery.json
+GET ^/oauth/oauth-protected-resource-mcp.json
+GET ^/dashboard/
+POST ^/dashboard/login
+POST ^/dashboard/save-config
+GET ^/dashboard/api/config
+GET ^/login/
+POST ^/login/
+GET ^/consent/
+POST ^/consent/
+GET ^/oauth/oauth2/auth
+GET ^/oauth/authorize
+POST ^/oauth/oauth2/token
+GET ^/oauth/.well-known/openid-configuration
+GET ^/oauth/userinfo
+POST ^/oauth/oauth2/revoke
+GET /authorize
+POST ^/message
+POST ^/
+GET ^/health
+POST ^/restart/:serviceName
+GET ^/services
+✅ Service routes ready
+[2025-07-26T06:30:50.716Z] [REQUEST_zdopuqu5h] ========== INCOMING REQUEST ==========
+[2025-07-26T06:30:50.716Z] [REQUEST_zdopuqu5h] Method: GET
+[2025-07-26T06:30:50.716Z] [REQUEST_zdopuqu5h] URL: /health
+[2025-07-26T06:30:50.716Z] [REQUEST_zdopuqu5h] Headers: {
+  "host": "localhost:3001",
+  "user-agent": "curl/8.5.0",
+  "accept": "*/*"
+}
+[2025-07-26T06:30:50.716Z] [REQUEST_zdopuqu5h] Query: {}
+[2025-07-26T06:30:54.926Z] [REQUEST_76d5a2i1s] ========== INCOMING REQUEST ==========
+[2025-07-26T06:30:54.926Z] [REQUEST_76d5a2i1s] Method: HEAD
+[2025-07-26T06:30:54.926Z] [REQUEST_76d5a2i1s] URL: /mcp/
+[2025-07-26T06:30:54.926Z] [REQUEST_76d5a2i1s] Headers: {
+  "host": "localhost:3001",
+  "user-agent": "curl/8.5.0",
+  "accept": "*/*"
+}
+[2025-07-26T06:30:54.926Z] [REQUEST_76d5a2i1s] Query: {}
+[OIDC] Processing request: HEAD /
+[OIDC] No valid authentication, redirecting to OAuth
+[REDIS] Session state:3b24da7fee20c79e1fa8e9e3994dcc9e stored with TTL 300s
+[OIDC] Redirecting to OAuth: http://127.0.0.1:4444/oauth2/auth?client_id=mcp-oauth-proxy&response_type=code&scope=openid+profile+email+mcp%3Aread&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Foauth%2Fcallback&state=3b24da7fee20c79e1fa8e9e3994dcc9e
+Shutting down MCP Unified Server...
+Dashboard Service shutting down...
+dashboard service shut down
+OAuth Proxy Service shutting down...
+oauthProxy service shut down
+OpenID Connect Router shutting down...
+Redis connection closed
+openIdRouter service shut down
+HTTP server closed

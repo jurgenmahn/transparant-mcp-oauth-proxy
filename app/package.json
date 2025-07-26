@@ -21,7 +21,9 @@
     "body-parser": "latest",
     "eventsource": "latest",
     "express": "latest",
+    "jsonwebtoken": "^9.0.2",
     "node-fetch": "latest",
+    "redis": "^5.6.1",
     "undici": "latest",
     "yaml": "^2.8.0",
     "zod": "latest"
