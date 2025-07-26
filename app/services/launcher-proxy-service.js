@@ -423,6 +423,39 @@ export class LauncherProxyService {
         // Register all tools from all services (cached registration - no verbose logging)
         this.registerAllToolsCached(server);
         
+        // Add resources handler
+        server.resource("*", "List all available resources", "application/json", async () => {
+            const resources = [];
+            // Add resources from all services if they support it
+            for (const [serviceName, service] of this.processes) {
+                if (service.initialized) {
+                    resources.push({
+                        uri: `mcp://${serviceName}/`,
+                        name: `${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)} Service`,
+                        description: `Resources from ${serviceName} service`,
+                        mimeType: "application/json"
+                    });
+                }
+            }
+            return resources;
+        });
+        
+        // Add prompts handler  
+        server.prompt("*", "List all available prompts", async () => {
+            const prompts = [];
+            // Add prompts from all services if they support it
+            for (const [serviceName, service] of this.processes) {
+                if (service.initialized) {
+                    prompts.push({
+                        name: `${serviceName}_help`,
+                        description: `Get help for ${serviceName} service tools`,
+                        arguments: []
+                    });
+                }
+            }
+            return prompts;
+        });
+        
         return server;
     }    
 
