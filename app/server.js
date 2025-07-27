@@ -219,32 +219,6 @@ class MCPServer {
         this.app.set('trust proxy', true);
         this.app.use(express.json());
 
-        // Handle CORS and security headers
-        this.app.use((req, res, next) => {
-            const origin = req.headers.origin;
-            const allowedOrigins = this.config.cors?.allowed_origins || [];
-            
-            // Only set CORS origin if it's in the allowed list
-            if (allowedOrigins.includes(origin)) {
-                res.setHeader('Access-Control-Allow-Origin', origin);
-            } else if (allowedOrigins.length > 0) {
-                // If no matching origin but we have allowed origins, use the first one
-                res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
-            } else {
-                // Fallback if no config is available
-                res.setHeader('Access-Control-Allow-Origin', 'http://localhost');
-            }
-            
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
-            res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-            if (req.method === 'OPTIONS') {
-                return res.sendStatus(200);
-            }
-            next();
-        });      
-
         // Enhanced debug logging middleware
         this.app.use((req, res, next) => {
             // Skip debug logging for the debug endpoint itself
@@ -458,17 +432,7 @@ class MCPServer {
     }
     
     async setupServiceRoutes() {
-        // Health check - make it very specific and first
-        this.app.get('/health', (req, res) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-                status: 'healthy', 
-                services: Object.keys(this.services),
-                timestamp: new Date().toISOString()
-            }));
-        });
-
-        // Debug endpoint - show request/response history
+        // Debug endpoint - show request/response history (keeping here for access to debug data)
         this.app.get('/debug', (req, res) => {
             const { method, url, status, limit } = req.query;
             let debugData = Array.from(this.debugRequests.values());
@@ -509,25 +473,9 @@ class MCPServer {
         // Dashboard routes (prefix: /dashboard)
         this.app.use('/dashboard', this.services.dashboard.getRouter());
         
-        // Unified OAuth Service routes - handles all OAuth endpoints
-        this.app.use('/oauth/login', this.services.unifiedOAuth.getLoginRouter());
-        this.app.use('/oauth/consent', this.services.unifiedOAuth.getConsentRouter());
+        // Unified OAuth Service routes - single consolidated router
         this.app.use('/oauth', this.services.unifiedOAuth.getRouter());
-        this.app.use('/', this.services.unifiedOAuth.getRouter()); // For root-level well-known endpoints
-        
-        // Root level OAuth endpoints for APISIX compatibility
-        this.app.get('/authorize', (req, res) => {
-            // Redirect /authorize to /oauth/oauth2/auth (APISIX compatibility)
-            const queryString = new URLSearchParams(req.query).toString();
-            const redirectUrl = `/oauth/oauth2/auth${queryString ? '?' + queryString : ''}`;
-            console.log(`[APISIX-COMPAT] Redirecting /authorize to ${redirectUrl}`);
-            res.redirect(redirectUrl);
-        });
-        
-        // OpenID Connect configuration at root level (proxy to OAuth service)
-        this.app.get('/.well-known/openid-configuration', (req, res) => {
-            res.redirect('/oauth/.well-known/openid-configuration');
-        });
+        this.app.use('/', this.services.unifiedOAuth.getRouter()); // For root-level endpoints (/authorize, /.well-known/*)
         
         // Apply OpenID Connect middleware to /mcp/* routes
         const oidcMiddleware = this.services.unifiedOAuth.getOpenIDConnectMiddleware();

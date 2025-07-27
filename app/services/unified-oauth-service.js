@@ -16,8 +16,6 @@ export class UnifiedOAuthService {
     constructor(appPath) {
         this.appPath = appPath;
         this.router = express.Router();
-        this.loginRouter = express.Router();
-        this.consentRouter = express.Router();
         this.config = {};
         this.redisClient = null;
         this.sessions = new Map(); // Fallback in-memory session store
@@ -177,8 +175,6 @@ export class UnifiedOAuthService {
 
     setupMiddleware() {
         this.router.use(bodyParser.urlencoded({ extended: false }));
-        this.loginRouter.use(bodyParser.urlencoded({ extended: false }));
-        this.consentRouter.use(bodyParser.urlencoded({ extended: false }));
 
         // Enhanced CORS middleware (replacing APISIX CORS)
         this.router.use((req, res, next) => {
@@ -502,9 +498,17 @@ export class UnifiedOAuthService {
     }
 
     setupRoutes() {
+        // Root level APISIX compatibility redirect
+        this.router.get('/authorize', (req, res) => {
+            // Redirect /authorize to /oauth/oauth2/auth (APISIX compatibility)
+            const queryString = new URLSearchParams(req.query).toString();
+            const redirectUrl = `/oauth/oauth2/auth${queryString ? '?' + queryString : ''}`;
+            console.log(`[APISIX-COMPAT] Redirecting /authorize to ${redirectUrl}`);
+            res.redirect(redirectUrl);
+        });
+
         // OAuth2 Authorization endpoint
         this.router.get('/oauth2/auth', this.handleOAuth2Auth);
-        this.router.get('/authorize', this.handleOAuth2Auth);  // APISIX compatibility
 
         // OAuth2 Client Registration endpoint
         this.router.post('/oauth/register', this.handleOAuth2Register);
@@ -556,6 +560,7 @@ export class UnifiedOAuthService {
         });
 
         // OpenID Connect configuration endpoint - proxy to Hydra
+        // This handles both /oauth/.well-known/openid-configuration and /.well-known/openid-configuration
         this.router.get('/.well-known/openid-configuration', async (req, res) => {
             try {
                 const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
@@ -717,6 +722,25 @@ export class UnifiedOAuthService {
             res.json(mcpDoc);
         });
 
+        // Health check endpoint
+        this.router.get('/health', (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                status: 'healthy', 
+                timestamp: new Date().toISOString()
+            }));
+        });
+
+        // Debug endpoint - show request/response history
+        this.router.get('/debug', (req, res) => {
+            // This requires access to server's debug data, so we'll need to modify this
+            res.writeHead(501, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                error: 'Debug endpoint temporarily moved to server.js',
+                message: 'Will be refactored'
+            }));
+        });
+
         this.setupLoginRoutes();
         this.setupConsentRoutes();
     }
@@ -864,7 +888,7 @@ export class UnifiedOAuthService {
 
     // Login routes setup
     setupLoginRoutes() {
-        this.loginRouter.get('/', async (req, res) => {
+        this.router.get('/login', async (req, res) => {
             const { login_challenge } = req.query;
 
             if (!login_challenge) {
@@ -899,7 +923,7 @@ export class UnifiedOAuthService {
             }
         });
 
-        this.loginRouter.post('/', async (req, res) => {
+        this.router.post('/login', async (req, res) => {
             const { email, password, remember } = req.body;
 
             const challenge = req.query.login_challenge;
@@ -949,7 +973,7 @@ export class UnifiedOAuthService {
 
     // Consent routes setup
     setupConsentRoutes() {
-        this.consentRouter.get('/', async (req, res) => {
+        this.router.get('/consent', async (req, res) => {
             const { consent_challenge } = req.query;
 
             if (!consent_challenge) {
@@ -992,7 +1016,7 @@ export class UnifiedOAuthService {
             }
         });
 
-        this.consentRouter.post('/', async (req, res) => {
+        this.router.post('/consent', async (req, res) => {
             const { grant_scope, remember } = req.body;
 
             const challenge = req.query.consent_challenge;
@@ -1137,14 +1161,6 @@ export class UnifiedOAuthService {
 
     getRouter() {
         return this.router;
-    }
-
-    getLoginRouter() {
-        return this.loginRouter;
-    }
-
-    getConsentRouter() {
-        return this.consentRouter;
     }
 
     getOpenIDConnectMiddleware() {
