@@ -30,12 +30,6 @@ export class UnifiedOAuthService {
             if (!this.config.oauth) {
                 throw new Error('OAuth configuration missing from local.yaml');
             }
-            if (!this.config.oauth.client_id) {
-                throw new Error('oauth.client_id missing from local.yaml');
-            }
-            if (!this.config.oauth.client_secret) {
-                throw new Error('oauth.client_secret missing from local.yaml');
-            }
             if (!this.config.oauth.session_secret) {
                 throw new Error('oauth.session_secret missing from local.yaml');
             }
@@ -60,17 +54,7 @@ export class UnifiedOAuthService {
 
         } catch (error) {
             console.error('Warning: Could not load OAuth config:', error.message);
-            // Set default config for stub functionality
-            this.config = {
-                hydra: { hostname: '127.0.0.1', admin_port: 4445, public_port: 4444 },
-                oauth: {
-                    client_id: 'mcp-oauth-proxy',
-                    allowed_redirect_domains: [],
-                    allowed_scopes: ['openid', 'profile', 'email']
-                },
-                cors: { allowed_origins: [] },
-                redis: { host: 'localhost', port: 6379 }
-            };
+            throw new Error('Warning: Could not load OAuth config: ' + error.message);
         }
 
         // Normalize configured domains and scopes to avoid mismatches due to whitespace
@@ -219,6 +203,7 @@ export class UnifiedOAuthService {
         });
 
         // Static file serving (replacing nginx on port 9280)
+        this.router.use('/static', express.static(`${this.appPath}/../static`));
         this.router.use('/static', express.static('templates'));
         this.router.use('/static', express.static('public'));
         this.router.use(express.static('public'));
@@ -409,13 +394,17 @@ export class UnifiedOAuthService {
             token_endpoint_auth_method
         } = req.body;
 
-        console.log(`[OAUTH] Client registration request: client_id=${client_id}, client_name=${client_name}`);
+        console.log(`[OAUTH] Client registration request: client_name=${client_name}`);
 
-        // Basic parameter validation
-        if (!client_id || !client_secret || !redirect_uris) {
+        // Basic parameter validation - only redirect_uris is required for dynamic registration
+        if (!redirect_uris || !Array.isArray(redirect_uris) && typeof redirect_uris !== 'string') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Missing required parameters: client_id, client_secret, redirect_uris' }));
+            return res.end(JSON.stringify({ error: 'Missing required parameter: redirect_uris' }));
         }
+
+        // Generate client_id and client_secret if not provided (dynamic registration)
+        const generatedClientId = client_id || `client_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+        const generatedClientSecret = client_secret || crypto.randomBytes(32).toString('base64');
 
         // Validate redirect URIs
         const redirectUriArray = Array.isArray(redirect_uris) ? redirect_uris : [redirect_uris];
@@ -441,9 +430,9 @@ export class UnifiedOAuthService {
             .join(' ') || 'openid';
 
         const clientPayload = {
-            client_id,
+            client_id: generatedClientId,
             client_name: client_name || 'OAuth Client',
-            client_secret,
+            client_secret: generatedClientSecret,
             redirect_uris: redirectUriArray,
             scope: safeScope,
             grant_types: grant_types || ['authorization_code', 'refresh_token'],
@@ -452,56 +441,46 @@ export class UnifiedOAuthService {
         };
 
         try {
-            let data;
-            await this.getClient(client_id).then(async (response) => {
-                data = await response.body.text();
-                console.log("Check if client already exist, response: ", data, " status code: ", response.statusCode);
+            // For dynamic registration, always create a new client (don't check if exists)
+            console.log('[OAUTH] Registering new client with payload:', { ...clientPayload, client_secret: '[REDACTED]' });
 
-                if (response.statusCode === 404) {
-                    console.log('[OAUTH] Registering client with payload:', clientPayload);
-
-                    // Use POST to create the client
-                    const registerResponse = await request(
-                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Host': this.config.hydra.hostname },
-                            body: JSON.stringify(clientPayload)
-                        }
-                    );
-                    const registerBody = await registerResponse.body.text();
-                    console.log(`[OAUTH] Registration response: ${registerResponse.statusCode} - ${registerBody}`);
-
-                    if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
-                        console.log('Client created successfully:', client_id);
-                        res.writeHead(201, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({ 
-                            message: 'Client registered successfully', 
-                            client_id: client_id,
-                            client_name: clientPayload.client_name
-                        }));
-                    } else {
-                        console.error('Failed to create client:', registerResponse.statusCode, registerBody);
-                        res.writeHead(500, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({ error: 'Failed to register OAuth client', details: registerBody }));
-                    }
-
-                } else if (response.statusCode >= 200 && response.statusCode < 300) {
-                    // Client already exists
-                    res.writeHead(409, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Client already exists', client_id: client_id }));
-                } else if (response.statusCode >= 500) {
-                    console.error('Hydra server error:', data);
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Hydra server error', details: data }));
+            // Use POST to create the client
+            const registerResponse = await request(
+                `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Host': this.config.hydra.hostname },
+                    body: JSON.stringify(clientPayload)
                 }
-            });
+            );
+
+            const registerBody = await registerResponse.body.text();
+            console.log(`[OAUTH] Registration response: ${registerResponse.statusCode} - ${registerBody}`);
+
+            if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
+                console.log('Client created successfully:', generatedClientId);
+                res.writeHead(201, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({
+                    client_id: generatedClientId,
+                    client_secret: generatedClientSecret,
+                    client_name: clientPayload.client_name,
+                    redirect_uris: redirectUriArray,
+                    scope: safeScope,
+                    grant_types: clientPayload.grant_types,
+                    response_types: clientPayload.response_types,
+                    token_endpoint_auth_method: clientPayload.token_endpoint_auth_method
+                }));
+            } else {
+                console.error('Failed to create client:', registerResponse.statusCode, registerBody);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: 'Failed to register OAuth client', details: registerBody }));
+            }
 
         } catch (regError) {
-            console.error('Error creating/updating client:', regError);
+            console.error('Error creating client:', regError);
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ 
-                error: 'Error during client registration', 
+            return res.end(JSON.stringify({
+                error: 'Error during client registration',
                 details: regError.message,
                 url: `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`
             }));
@@ -550,13 +529,23 @@ export class UnifiedOAuthService {
         // OAuth2 Token endpoint - proxy to Hydra
         this.router.post('/oauth2/token', async (req, res) => {
             try {
+                // Convert body to proper format for undici
+                let bodyData;
+                if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+                    // Convert object to URL-encoded string
+                    bodyData = new URLSearchParams(req.body).toString();
+                } else {
+                    // For other content types, stringify if needed
+                    bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+                }
+
                 const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/token`, {
                     method: 'POST',
                     headers: {
                         ...req.headers,
                         'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
                     },
-                    body: req.body
+                    body: bodyData
                 });
 
                 const body = await response.body.text();
@@ -662,67 +651,13 @@ export class UnifiedOAuthService {
             }
         });
 
-        // OAuth callback handler (replaces APISIX flow)
+        // OAuth callback handler - DISABLED for dynamic client registration
+        // Each client must handle their own callback URLs
         this.router.get('/oauth/callback', async (req, res) => {
-            try {
-                const { code, state, error } = req.query;
-
-                if (error) {
-                    return res.status(400).json({ error: 'OAuth error', details: error });
-                }
-
-                if (!code || !state) {
-                    return res.status(400).json({ error: 'Missing code or state parameter' });
-                }
-
-                // Validate state
-                const stateData = await this.getSession(`state:${state}`);
-                if (!stateData) {
-                    console.error(`[OIDC] Invalid state parameter: ${state}`);
-                    return res.status(400).json({ error: 'Invalid state parameter' });
-                }
-
-                // Clean up state immediately to prevent reuse
-                await this.deleteSession(`state:${state}`);
-
-                // Debug log state data
-                console.log(`[OIDC] State data:`, JSON.stringify(stateData, null, 2));
-                console.log(`[OIDC] Using redirect_uri from state:`, stateData.redirect_uri);
-
-                // Exchange code for tokens using original redirect_uri
-                const tokenResponse = await this.exchangeCodeForTokens(code, stateData.redirect_uri);
-                if (!tokenResponse) {
-                    return res.status(500).json({ error: 'Failed to exchange code for tokens' });
-                }
-
-                // Get user info
-                const userinfo = await this.getUserInfo(tokenResponse.access_token);
-
-                // Create session
-                const sessionId = crypto.randomBytes(32).toString('hex');
-                const sessionTTL = tokenResponse.expires_in || 3600;
-                await this.setSession(sessionId, {
-                    user: { sub: userinfo?.sub || 'unknown' },
-                    accessToken: tokenResponse.access_token,
-                    idToken: tokenResponse.id_token,
-                    refreshToken: tokenResponse.refresh_token,
-                    userinfo: userinfo
-                }, sessionTTL);
-
-                // Set session cookie
-                res.cookie('mcp-session', sessionId, {
-                    httpOnly: true,
-                    secure: req.secure,
-                    maxAge: tokenResponse.expires_in * 1000
-                });
-
-                console.log(`[OIDC] OAuth callback successful, redirecting to: ${stateData.originalUrl}`);
-                res.redirect(stateData.originalUrl || '/');
-
-            } catch (error) {
-                console.error('OAuth callback error:', error);
-                res.status(500).json({ error: 'OAuth callback failed', details: error.message });
-            }
+            res.status(400).json({ 
+                error: 'Generic callback disabled', 
+                message: 'Clients must use their own callback URLs registered during dynamic registration' 
+            });
         });
 
         // Logout endpoint
@@ -743,6 +678,13 @@ export class UnifiedOAuthService {
 
         // OAuth authorization server discovery - generate document directly
         this.router.get('/.well-known/oauth-authorization-server', (req, res) => {
+            const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(discoveryDoc);
+        });
+
+        // OAuth authorization server discovery with /mcp path
+        this.router.get('/.well-known/oauth-authorization-server/mcp', (req, res) => {
             const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
             res.setHeader('Content-Type', 'application/json');
             res.json(discoveryDoc);
@@ -769,6 +711,12 @@ export class UnifiedOAuthService {
             res.json(discoveryDoc);
         });
 
+        this.router.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
+            const mcpDoc = this.generateOAuthProtectedResourceMcp();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(mcpDoc);
+        });
+
         this.router.get('/.well-known/oauth-protected-resource/mcp/*', (req, res) => {
             const mcpDoc = this.generateOAuthProtectedResourceMcp();
             res.setHeader('Content-Type', 'application/json');
@@ -793,19 +741,23 @@ export class UnifiedOAuthService {
     }
 
     // Exchange authorization code for tokens
-    async exchangeCodeForTokens(code, originalRedirectUri = null) {
+    async exchangeCodeForTokens(code, originalRedirectUri = null, clientId = null, clientSecret = null) {
         try {
             // Use original redirect_uri if provided, otherwise default to our callback
             const redirectUri = originalRedirectUri || `${this.config.hydra?.public_url || 'http://localhost:3000'}/oauth/callback`;
             console.log(`[OIDC] Token exchange - redirect_uri: ${redirectUri}`);
+
+            if (!clientId || !clientSecret) {
+                throw new Error('Client credentials required for token exchange');
+            }
 
             const tokenUrl = `http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/token`;
             const tokenPayload = {
                 grant_type: 'authorization_code',
                 code: code,
                 redirect_uri: redirectUri,
-                client_id: this.config.oauth.client_id,
-                client_secret: this.config.oauth.client_secret
+                client_id: clientId,
+                client_secret: clientSecret
             };
 
             console.log(`[OIDC] Token exchange request to: ${tokenUrl}`);
@@ -931,7 +883,7 @@ export class UnifiedOAuthService {
 
         const templateVars = {
             BASE_URL: baseUrl,
-            CLIENT_ID: this.config.oauth.client_id,
+            CLIENT_ID: "Dynamic generated",
             SCOPES: this.config.oauth.scope
         };
 
@@ -959,35 +911,11 @@ export class UnifiedOAuthService {
 
                 const loginInfo = await loginReq.body.json();
 
-                // Auto-approve for MCP client (no user interaction needed)
-                if (loginInfo.client && loginInfo.client.client_id === 'mcp-oauth-proxy') {
-                    console.log('[OAUTH-LOGIN] Auto-approving login for MCP client');
-
-                    // Accept the login request
-                    const acceptResponse = await request(
-                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/login/accept?login_challenge=${login_challenge}`,
-                        {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                subject: 'jurgen@mahn.it', // Auto-login as configured user
-                                remember: true,
-                                remember_for: 3600
-                            })
-                        }
-                    );
-
-                    if (acceptResponse.statusCode === 200) {
-                        const acceptData = await acceptResponse.body.json();
-                        return res.redirect(acceptData.redirect_to);
-                    }
-                }
-
-                // For other clients, show login form
                 const loginForm = this.renderTemplate('login.html', {
                     LOGIN_CHALLENGE: login_challenge,
                     CLIENT_NAME: loginInfo.client?.client_name || loginInfo.client?.client_id || 'Unknown Client',
-                    REQUESTED_SCOPES: (loginInfo.requested_scope || []).join(', ')
+                    REQUESTED_SCOPES: (loginInfo.requested_scope || []).join(', '),
+                    ERROR: ''
                 });
 
                 res.setHeader('Content-Type', 'text/html');
@@ -1000,7 +928,10 @@ export class UnifiedOAuthService {
         });
 
         this.loginRouter.post('/', async (req, res) => {
-            const { login_challenge, email, password, remember } = req.body;
+            const { email, password, remember } = req.body;
+
+            const challenge = req.query.login_challenge;
+            if (!challenge) return res.status(400).send('Missing login_challenge');
 
             try {
                 // Validate user credentials
@@ -1017,18 +948,18 @@ export class UnifiedOAuthService {
                 }
 
                 // Accept the login request
-                const acceptResponse = await request(
-                    `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/login/accept?login_challenge=${login_challenge}`,
-                    {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            subject: email,
-                            remember: !!remember,
-                            remember_for: remember ? 3600 : 0
-                        })
-                    }
-                );
+                const acceptResponse = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/login/accept?login_challenge=${challenge}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        subject: email,
+                        remember: true,
+                        remember_for: 3600
+                    }),
+                    maxRedirects: 0
+                });
 
                 if (acceptResponse.statusCode === 200) {
                     const acceptData = await acceptResponse.body.json();
@@ -1065,35 +996,12 @@ export class UnifiedOAuthService {
 
                 const consentInfo = await consentReq.body.json();
 
-                // Auto-approve for MCP client (no user interaction needed)
-                if (consentInfo.client && consentInfo.client.client_id === 'mcp-oauth-proxy') {
-                    console.log('[OAUTH-CONSENT] Auto-approving consent for MCP client');
-
-                    // Accept the consent request
-                    const acceptResponse = await request(
-                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`,
-                        {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                grant_scope: consentInfo.requested_scope,
-                                remember: true,
-                                remember_for: 3600
-                            })
-                        }
-                    );
-
-                    if (acceptResponse.statusCode === 200) {
-                        const acceptData = await acceptResponse.body.json();
-                        return res.redirect(acceptData.redirect_to);
-                    }
-                }
-
                 // For other clients, show consent form
+                const scopeList = (consentInfo.requested_scope || []).map(scope => `<li>${scope}</li>`).join('');
                 const consentForm = this.renderTemplate('consent.html', {
                     CONSENT_CHALLENGE: consent_challenge,
                     CLIENT_NAME: consentInfo.client?.client_name || consentInfo.client?.client_id || 'Unknown Client',
-                    REQUESTED_SCOPES: (consentInfo.requested_scope || []).join(', '),
+                    SCOPE_LIST: scopeList,
                     USER_ID: consentInfo.subject
                 });
 
@@ -1107,22 +1015,26 @@ export class UnifiedOAuthService {
         });
 
         this.consentRouter.post('/', async (req, res) => {
-            const { consent_challenge, grant_scope, remember } = req.body;
+            const { grant_scope, remember } = req.body;
+
+            const challenge = req.query.consent_challenge;
+            if (!challenge) return res.status(400).send('Missing consent_challenge');            
 
             try {
                 const grantedScopes = Array.isArray(grant_scope) ? grant_scope : [grant_scope].filter(Boolean);
 
                 // Accept the consent request
                 const acceptResponse = await request(
-                    `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`,
+                    `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${challenge}`,
                     {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             grant_scope: grantedScopes,
-                            remember: !!remember,
-                            remember_for: remember ? 3600 : 0
-                        })
+                            remember: true,
+                            remember_for: 3600
+                        }),
+                    maxRedirects: 0
                     }
                 );
 
@@ -1160,11 +1072,11 @@ export class UnifiedOAuthService {
         }
     }
 
-    // OpenID Connect middleware (replacing APISIX openid-connect plugin)
+    // Token-based authentication middleware for dynamic clients
     createOpenIDConnectMiddleware() {
         return async (req, res, next) => {
             try {
-                console.log(`[OIDC] Processing request: ${req.method} ${req.path}`);
+                console.log(`[AUTH] Processing request: ${req.method} ${req.path}`);
 
                 // Skip authentication for specific paths
                 const skipPaths = ['/health', '/login', '/consent', '/oauth', '/.well-known'];
@@ -1172,47 +1084,74 @@ export class UnifiedOAuthService {
                     return next();
                 }
 
-                // Check for existing session
-                const sessionId = req.cookies['mcp-session'] || req.headers['mcp-session-id'];
-                if (sessionId) {
-                    const session = await this.getSession(sessionId);
-
-                    if (session) {
-                        // Add user info to request
-                        req.user = session.user;
-                        req.accessToken = session.accessToken;
-                        req.idToken = session.idToken;
-
-                        // Set headers as APISIX did
-                        res.setHeader('X-Access-Token', session.accessToken);
-                        res.setHeader('X-ID-Token', session.idToken);
-                        if (session.userinfo) {
-                            res.setHeader('X-Userinfo', JSON.stringify(session.userinfo));
-                        }
-
-                        return next();
-                    }
+                // Check for Bearer token in Authorization header
+                const authHeader = req.headers.authorization;
+                if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                    return res.status(401).json({ 
+                        error: 'unauthorized', 
+                        message: 'Bearer token required. Use OAuth2 flow to obtain access token.' 
+                    });
                 }
 
-                // No valid session - redirect to OAuth flow
-                const state = crypto.randomBytes(16).toString('hex');
-                const originalUrl = req.originalUrl;
+                const accessToken = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-                // Store original URL for redirect after auth
-                await this.setSession(`state:${state}`, { originalUrl }, 300);
+                // Validate token with Hydra introspection
+                try {
+                    const introspectResponse = await request(
+                        `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/introspect`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: new URLSearchParams({ token: accessToken }).toString()
+                        }
+                    );
 
-                const authUrl = new URL(`${this.config.hydra.public_url}/oauth/oauth2/auth`);
-                authUrl.searchParams.set('response_type', 'code');
-                authUrl.searchParams.set('client_id', this.config.oauth.client_id);
-                authUrl.searchParams.set('redirect_uri', `${this.config.hydra.public_url}/oauth/callback`);
-                authUrl.searchParams.set('scope', this.config.oauth.scope);
-                authUrl.searchParams.set('state', state);
+                    if (introspectResponse.statusCode !== 200) {
+                        return res.status(401).json({ 
+                            error: 'unauthorized', 
+                            message: 'Invalid access token' 
+                        });
+                    }
 
-                console.log(`[OIDC] Redirecting to auth: ${authUrl.toString()}`);
-                res.redirect(authUrl.toString());
+                    const tokenInfo = await introspectResponse.body.json();
+                    
+                    if (!tokenInfo.active) {
+                        return res.status(401).json({ 
+                            error: 'unauthorized', 
+                            message: 'Access token is not active' 
+                        });
+                    }
+
+                    // Check if token has required MCP scope
+                    const scopes = tokenInfo.scope ? tokenInfo.scope.split(' ') : [];
+                    if (!scopes.includes('mcp:read')) {
+                        return res.status(403).json({ 
+                            error: 'forbidden', 
+                            message: 'Token missing required mcp:read scope' 
+                        });
+                    }
+
+                    // Add user info to request
+                    req.user = { 
+                        sub: tokenInfo.sub,
+                        client_id: tokenInfo.client_id,
+                        scopes: scopes
+                    };
+                    req.accessToken = accessToken;
+
+                    console.log(`[AUTH] Authenticated user: ${tokenInfo.sub} via client: ${tokenInfo.client_id}`);
+                    return next();
+
+                } catch (introspectError) {
+                    console.error('Token introspection error:', introspectError);
+                    return res.status(401).json({ 
+                        error: 'unauthorized', 
+                        message: 'Token validation failed' 
+                    });
+                }
 
             } catch (error) {
-                console.error('OIDC Middleware error:', error);
+                console.error('Auth Middleware error:', error);
                 res.status(500).json({ error: 'Authentication failed' });
             }
         };

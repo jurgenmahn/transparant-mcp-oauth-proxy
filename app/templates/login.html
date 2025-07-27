@@ -13,8 +13,8 @@
             <p>Please sign in to continue</p>
         </div>
         <div class="form-container">
-            {{ERROR_MESSAGE}}
-            <form method="POST" action="/oauth/login?login_challenge={{CHALLENGE}}">
+            {{ERROR}}
+            <form method="POST" action="/oauth/login?login_challenge={{LOGIN_CHALLENGE}}">
                 <div class="form-group">
                     <label for="email">Email Address</label>
                     <input type="email" id="email" name="email" placeholder="your@email.com" required>

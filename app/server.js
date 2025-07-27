@@ -16,6 +16,8 @@ class MCPServer {
         this.app = express();
         this.config = {};
         this.services = {};
+        this.debugRequests = new Map(); // Store debug data: requestId -> {request, response}
+        this.maxDebugEntries = 1000; // Limit memory usage
         this.loadConfig();
     }
 
@@ -33,7 +35,184 @@ class MCPServer {
             console.log('Using default port 3000');
             this.port = 3000;
         }
-    }    
+    }
+
+    generateDebugHtml(debugData) {
+        const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Server Debug Console</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .filter-input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .btn { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn:hover { background: #0056b3; }
+        .request-response { background: white; margin-bottom: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .request-header { background: #28a745; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .response-header { background: #17a2b8; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .method { font-weight: bold; padding: 4px 8px; border-radius: 4px; background: rgba(255,255,255,0.2); }
+        .status { font-weight: bold; padding: 4px 8px; border-radius: 4px; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.redirect { background: #fff3cd; color: #856404; }
+        .content { padding: 15px; }
+        .content-row { display: flex; gap: 20px; }
+        .content-col { flex: 1; }
+        .json-viewer { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 15px; overflow-x: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; white-space: pre-wrap; }
+        .timing { font-size: 12px; opacity: 0.8; }
+        .no-data { text-align: center; padding: 40px; color: #666; }
+        .response-time { font-weight: bold; }
+        .response-time.fast { color: #28a745; }
+        .response-time.medium { color: #ffc107; }
+        .response-time.slow { color: #dc3545; }
+        .expand-btn { background: none; border: none; color: white; cursor: pointer; font-size: 16px; }
+        .collapsible-content { display: none; }
+        .expanded .collapsible-content { display: block; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🐛 MCP Server Debug Console</h1>
+        <p>Real-time HTTP request and response monitoring</p>
+        
+        <div class="filters">
+            <input type="text" id="methodFilter" class="filter-input" placeholder="Filter by method (GET, POST...)" value="${new URLSearchParams(global.location?.search || '').get('method') || ''}">
+            <input type="text" id="urlFilter" class="filter-input" placeholder="Filter by URL" value="${new URLSearchParams(global.location?.search || '').get('url') || ''}">
+            <input type="text" id="statusFilter" class="filter-input" placeholder="Filter by status (200, 404...)" value="${new URLSearchParams(global.location?.search || '').get('status') || ''}">
+            <input type="number" id="limitFilter" class="filter-input" placeholder="Limit (default: 100)" value="${new URLSearchParams(global.location?.search || '').get('limit') || ''}">
+            <button onclick="applyFilters()" class="btn">Apply Filters</button>
+            <button onclick="clearFilters()" class="btn" style="background: #6c757d;">Clear</button>
+            <button onclick="location.reload()" class="btn" style="background: #28a745;">Refresh</button>
+        </div>
+    </div>
+
+    <div id="requests">
+        ${debugData.length === 0 ? '<div class="no-data">No requests captured yet. Make some requests to see debug data here.</div>' : ''}
+        ${debugData.map(entry => this.generateRequestResponseHtml(entry)).join('')}
+    </div>
+
+    <script>
+        function applyFilters() {
+            const params = new URLSearchParams();
+            const method = document.getElementById('methodFilter').value;
+            const url = document.getElementById('urlFilter').value;
+            const status = document.getElementById('statusFilter').value;
+            const limit = document.getElementById('limitFilter').value;
+            
+            if (method) params.set('method', method);
+            if (url) params.set('url', url);
+            if (status) params.set('status', status);
+            if (limit) params.set('limit', limit);
+            
+            window.location.search = params.toString();
+        }
+        
+        function clearFilters() {
+            window.location.search = '';
+        }
+        
+        function toggleSection(button) {
+            const requestResponse = button.closest('.request-response');
+            requestResponse.classList.toggle('expanded');
+        }
+        
+        // Auto-refresh removed per user request
+    </script>
+</body>
+</html>`;
+        return html;
+    }
+
+    generateRequestResponseHtml(entry) {
+        const { request, response } = entry;
+        const hasResponse = !!response;
+        
+        const getStatusClass = (status) => {
+            if (status >= 200 && status < 300) return 'success';
+            if (status >= 300 && status < 400) return 'redirect';
+            return 'error';
+        };
+        
+        const getResponseTimeClass = (time) => {
+            if (time < 100) return 'fast';
+            if (time < 500) return 'medium';
+            return 'slow';
+        };
+        
+        const formatJson = (obj) => {
+            if (!obj) return 'null';
+            return JSON.stringify(obj, null, 2);
+        };
+        
+        const formatTimestamp = (timestamp) => {
+            return new Date(timestamp).toLocaleString();
+        };
+
+        return `
+            <div class="request-response">
+                <div class="request-header">
+                    <div>
+                        <span class="method">${request.method}</span>
+                        <strong>${request.url}</strong>
+                        <div class="timing">${formatTimestamp(request.timestamp)}</div>
+                    </div>
+                    <button class="expand-btn" onclick="toggleSection(this)">▼</button>
+                </div>
+                
+                ${hasResponse ? `
+                <div class="response-header">
+                    <div>
+                        <span class="status ${getStatusClass(response.status)}">${response.status}</span>
+                        <span class="response-time ${getResponseTimeClass(response.responseTime)}">${response.responseTime}ms</span>
+                        <div class="timing">${formatTimestamp(response.timestamp)}</div>
+                    </div>
+                </div>
+                ` : '<div class="response-header" style="background: #6c757d;"><div>No Response Yet</div></div>'}
+                
+                <div class="collapsible-content">
+                    <div class="content">
+                        <div class="content-row">
+                            <div class="content-col">
+                                <h4>📤 Request</h4>
+                                <h5>Headers:</h5>
+                                <div class="json-viewer">${formatJson(request.headers)}</div>
+                                ${request.query && Object.keys(request.query).length > 0 ? `
+                                <h5>Query Parameters:</h5>
+                                <div class="json-viewer">${formatJson(request.query)}</div>
+                                ` : ''}
+                                ${request.body ? `
+                                <h5>Body:</h5>
+                                <div class="json-viewer">${formatJson(request.body)}</div>
+                                ` : ''}
+                            </div>
+                            
+                            ${hasResponse ? `
+                            <div class="content-col">
+                                <h4>📥 Response</h4>
+                                <h5>Headers:</h5>
+                                <div class="json-viewer">${formatJson(response.headers)}</div>
+                                ${response.body ? `
+                                <h5>Body (${response.type}):</h5>
+                                <div class="json-viewer">${response.type === 'json' ? formatJson(response.body) : response.body}</div>
+                                ` : ''}
+                            </div>
+                            ` : `
+                            <div class="content-col">
+                                <h4>📥 Response</h4>
+                                <div class="no-data">Waiting for response...</div>
+                            </div>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
     
     async setupMiddleware() {
         // Enable trust proxy to correctly identify secure connections behind reverse proxies
@@ -68,10 +247,28 @@ class MCPServer {
 
         // Enhanced debug logging middleware
         this.app.use((req, res, next) => {
+            // Skip debug logging for the debug endpoint itself
+            if (req.url === '/debug' || req.url.startsWith('/debug?')) {
+                return next();
+            }
+
             const timestamp = new Date().toISOString();
             const requestId = Math.random().toString(36).substring(2, 11);
+            const startTime = Date.now();
 
-            // Log incoming request
+            // Store request data for debug endpoint
+            const requestData = {
+                id: requestId,
+                timestamp: timestamp,
+                startTime: startTime,
+                method: req.method,
+                url: req.url,
+                headers: { ...req.headers },
+                body: req.body ? JSON.parse(JSON.stringify(req.body)) : null,
+                query: { ...req.query }
+            };
+
+            // Log incoming request (keep existing console output)
             console.log(`[${timestamp}] [REQUEST_${requestId}] ========== INCOMING REQUEST ==========`);
             console.log(`[${timestamp}] [REQUEST_${requestId}] Method: ${req.method}`);
             console.log(`[${timestamp}] [REQUEST_${requestId}] URL: ${req.url}`);
@@ -81,15 +278,38 @@ class MCPServer {
             }
             console.log(`[${timestamp}] [REQUEST_${requestId}] Query:`, JSON.stringify(req.query, null, 2));
 
+            // Store request data
+            this.debugRequests.set(requestId, { request: requestData });
+            
+            // Cleanup old entries if we exceed the limit
+            if (this.debugRequests.size > this.maxDebugEntries) {
+                const oldestKey = this.debugRequests.keys().next().value;
+                this.debugRequests.delete(oldestKey);
+            }
+
             // Store request ID for response logging
             req.requestId = requestId;
-            req.startTime = Date.now();
+            req.startTime = startTime;
 
             // Override res.json to log responses
             const originalJson = res.json;
+            const self = this;
             res.json = function (body) {
                 const responseTime = Date.now() - req.startTime;
                 const responseTimestamp = new Date().toISOString();
+
+                // Store response data
+                const debugEntry = self.debugRequests.get(requestId);
+                if (debugEntry) {
+                    debugEntry.response = {
+                        timestamp: responseTimestamp,
+                        responseTime: responseTime,
+                        status: res.statusCode,
+                        headers: { ...res.getHeaders() },
+                        body: body ? JSON.parse(JSON.stringify(body)) : null,
+                        type: 'json'
+                    };
+                }
 
                 console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
                 console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
@@ -107,6 +327,19 @@ class MCPServer {
                 const responseTime = Date.now() - req.startTime;
                 const responseTimestamp = new Date().toISOString();
 
+                // Store response data
+                const debugEntry = self.debugRequests.get(requestId);
+                if (debugEntry) {
+                    debugEntry.response = {
+                        timestamp: responseTimestamp,
+                        responseTime: responseTime,
+                        status: res.statusCode,
+                        headers: { ...res.getHeaders() },
+                        body: body,
+                        type: 'text'
+                    };
+                }
+
                 console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
                 console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
                 console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
@@ -120,10 +353,23 @@ class MCPServer {
             // Override res.end to log responses without explicit body
             const originalEnd = res.end;
             res.end = function (chunk, encoding) {
-                if (!res.headersSent && chunk) {
-                    const responseTime = Date.now() - req.startTime;
-                    const responseTimestamp = new Date().toISOString();
+                const responseTime = Date.now() - req.startTime;
+                const responseTimestamp = new Date().toISOString();
 
+                // Store response data for any response that goes through res.end
+                const debugEntry = self.debugRequests.get(requestId);
+                if (debugEntry && !debugEntry.response) {
+                    debugEntry.response = {
+                        timestamp: responseTimestamp,
+                        responseTime: responseTime,
+                        status: res.statusCode,
+                        headers: { ...res.getHeaders() },
+                        body: chunk || null,
+                        type: chunk ? 'raw' : 'empty'
+                    };
+                }
+
+                if (chunk) {
                     console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE ==========`);
                     console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
                     console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
@@ -134,6 +380,30 @@ class MCPServer {
 
                 return originalEnd.call(this, chunk, encoding);
             };
+
+            // Add a finish event listener as a fallback to capture all responses
+            res.on('finish', () => {
+                const debugEntry = self.debugRequests.get(requestId);
+                if (debugEntry && !debugEntry.response) {
+                    const responseTime = Date.now() - req.startTime;
+                    const responseTimestamp = new Date().toISOString();
+                    
+                    debugEntry.response = {
+                        timestamp: responseTimestamp,
+                        responseTime: responseTime,
+                        status: res.statusCode,
+                        headers: { ...res.getHeaders() },
+                        body: null,
+                        type: 'finish'
+                    };
+                    
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ========== OUTGOING RESPONSE (FINISH) ==========`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Status: ${res.statusCode}`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Response Time: ${responseTime}ms`);
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] Headers:`, JSON.stringify(res.getHeaders(), null, 2));
+                    console.log(`[${responseTimestamp}] [RESPONSE_${requestId}] ================================================`);
+                }
+            });
 
             next();
         });
@@ -197,6 +467,44 @@ class MCPServer {
                 timestamp: new Date().toISOString()
             }));
         });
+
+        // Debug endpoint - show request/response history
+        this.app.get('/debug', (req, res) => {
+            const { method, url, status, limit } = req.query;
+            let debugData = Array.from(this.debugRequests.values());
+
+            // Filter by method
+            if (method) {
+                debugData = debugData.filter(entry => 
+                    entry.request.method.toLowerCase() === method.toLowerCase()
+                );
+            }
+
+            // Filter by URL
+            if (url) {
+                debugData = debugData.filter(entry => 
+                    entry.request.url.includes(url)
+                );
+            }
+
+            // Filter by status
+            if (status) {
+                debugData = debugData.filter(entry => 
+                    entry.response && entry.response.status.toString() === status
+                );
+            }
+
+            // Sort by request time (ascending by default)
+            debugData.sort((a, b) => a.request.startTime - b.request.startTime);
+
+            // Limit results
+            const limitNum = parseInt(limit) || 100;
+            debugData = debugData.slice(-limitNum);
+
+            const html = this.generateDebugHtml(debugData);
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(html);
+        });
         
         // Dashboard routes (prefix: /dashboard)
         this.app.use('/dashboard', this.services.dashboard.getRouter());
@@ -236,19 +544,7 @@ class MCPServer {
                 path: req.originalUrl
             }));
         });
-
-        console.log("registered routes");
-        this.app._router.stack.forEach(middleware => {
-        if (middleware.route) {
-            console.log(`${Object.keys(middleware.route.methods)[0].toUpperCase()} ${middleware.route.path}`);
-        } else if (middleware.name === 'router') {
-            middleware.handle.stack.forEach(handler => {
-            if (handler.route) {
-                console.log(`${Object.keys(handler.route.methods)[0].toUpperCase()} ${middleware.regexp.source.replace('\\/?(?=\\/|$)', '').replace(/\\\//g, '/')}${handler.route.path}`);
-            }
-            });
-        }
-        });        
+      
     }
     
     async start() {
