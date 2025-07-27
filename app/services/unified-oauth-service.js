@@ -33,9 +33,6 @@ export class UnifiedOAuthService {
             if (!this.config.oauth.session_secret) {
                 throw new Error('oauth.session_secret missing from local.yaml');
             }
-            if (!this.config.oauth.scope) {
-                throw new Error('oauth.scope missing from local.yaml');
-            }
             if (!this.config.cors) {
                 throw new Error('cors configuration missing from local.yaml');
             }
@@ -837,7 +834,7 @@ export class UnifiedOAuthService {
             "response_types_supported": ["code", "id_token", "token", "code id_token", "code token", "id_token token", "code id_token token"],
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
-            "scopes_supported": ["openid", "profile", "email", "offline_access", "mcp:read"],
+            "scopes_supported": this.config.oauth.allowed_scopes,
             "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
             "grant_types_supported": ["authorization_code", "implicit", "refresh_token", "client_credentials"],
             "response_modes_supported": ["query", "fragment", "form_post"]
@@ -884,7 +881,7 @@ export class UnifiedOAuthService {
         const templateVars = {
             BASE_URL: baseUrl,
             CLIENT_ID: "Dynamic generated",
-            SCOPES: this.config.oauth.scope
+            SCOPES: this.config.oauth.allowed_scopes.join(" "),
         };
 
         return this.renderTemplate('api-docs.html', templateVars);
@@ -997,11 +994,17 @@ export class UnifiedOAuthService {
                 const consentInfo = await consentReq.body.json();
 
                 // For other clients, show consent form
-                const scopeList = (consentInfo.requested_scope || []).map(scope => `<li>${scope}</li>`).join('');
+                const requestedScopes = consentInfo.requested_scope || [];
+                const scopeList = requestedScopes.map(scope => `<li>${scope}</li>`).join('');
+                const scopeHiddenFields = requestedScopes.map(scope => 
+                    `<input type="hidden" name="grant_scope" value="${scope}">`
+                ).join('');
+                
                 const consentForm = this.renderTemplate('consent.html', {
                     CONSENT_CHALLENGE: consent_challenge,
                     CLIENT_NAME: consentInfo.client?.client_name || consentInfo.client?.client_id || 'Unknown Client',
                     SCOPE_LIST: scopeList,
+                    SCOPE_HIDDEN_FIELDS: scopeHiddenFields,
                     USER_ID: consentInfo.subject
                 });
 

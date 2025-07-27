@@ -21,6 +21,7 @@
                 </ul>
             </div>
             <form method="POST" action="/oauth/consent?consent_challenge={{CONSENT_CHALLENGE}}">
+                {{SCOPE_HIDDEN_FIELDS}}
                 <button type="submit" class="btn">Allow Access</button>
             </form>
         </div>
