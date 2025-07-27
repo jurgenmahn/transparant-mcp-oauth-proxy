@@ -648,15 +648,6 @@ export class UnifiedOAuthService {
             }
         });
 
-        // OAuth callback handler - DISABLED for dynamic client registration
-        // Each client must handle their own callback URLs
-        this.router.get('/oauth/callback', async (req, res) => {
-            res.status(400).json({ 
-                error: 'Generic callback disabled', 
-                message: 'Clients must use their own callback URLs registered during dynamic registration' 
-            });
-        });
-
         // Logout endpoint
         this.router.post('/logout', async (req, res) => {
             try {
@@ -689,13 +680,6 @@ export class UnifiedOAuthService {
 
         // API docs route - Dynamic generation
         this.router.get('/docs', (req, res) => {
-            const apiDocs = this.generateApiDocumentation();
-            res.setHeader('Content-Type', 'text/html');
-            res.send(apiDocs);
-        });
-
-        // Legacy route for backward compatibility
-        this.router.get('/oauth/api-docs.html', (req, res) => {
             const apiDocs = this.generateApiDocumentation();
             res.setHeader('Content-Type', 'text/html');
             res.send(apiDocs);
@@ -760,7 +744,7 @@ export class UnifiedOAuthService {
             console.log(`[OIDC] Token exchange request to: ${tokenUrl}`);
             console.log(`[OIDC] Token exchange payload:`, {
                 ...tokenPayload,
-                client_secret: '[REDACTED]'
+                client_secret: clientSecret
             });
 
             // Use client_secret_post method: send client credentials in body per Hydra client registration
@@ -780,15 +764,6 @@ export class UnifiedOAuthService {
 
             const errorBody = await response.body.text();
             console.error(`[OIDC] Token exchange failed: ${response.statusCode} - ${errorBody}`);
-            console.error(`[OIDC] Request details:`, {
-                url: tokenUrl,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Authorization': 'Basic [REDACTED]'
-                },
-                body: new URLSearchParams(tokenPayload).toString()
-            });
             return null;
         } catch (error) {
             console.error('Token exchange error:', error);
