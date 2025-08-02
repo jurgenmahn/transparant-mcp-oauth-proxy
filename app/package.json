@@ -10,7 +10,7 @@
   "dependencies": {
     "@bytebase/dbhub": "latest",
     "@cyanheads/git-mcp-server": "latest",
-    "@playwright/mcp": "latest",
+    "@playwright/mcp": "0.0.32",
     "@modelcontextprotocol/sdk": "latest",
     "@modelcontextprotocol/server-filesystem": "latest",
     "@modelcontextprotocol/server-memory": "latest",
