@@ -65,16 +65,16 @@ export class LauncherProxyService {
         this.lastToolListHash = null;
         this.lastResourceListHash = null;
         this.lastPromptListHash = null;
-        
+
         // Performance optimizations - cache expensive operations
         this.cachedHealthStatus = null;
         this.lastHealthStatusUpdate = 0;
         this.healthStatusCacheTTL = 5000; // 5 seconds cache
-        
+
         this.cachedServicesList = null;
         this.lastServicesListUpdate = 0;
         this.servicesListCacheTTL = 2000; // 2 seconds cache
-        
+
         this.setupRoutes();
     }
 
@@ -104,14 +104,14 @@ export class LauncherProxyService {
         console.log("🔧 Starting MCP Bridge services...");
         // Start all backend services and register their tools
         await this.startAllServices();
-        
+
         // Initialize the persistent MCP server and transport
         this.mcpServer = this.createServer();
         this.transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined, // Disable session management for stateless mode
             enableJsonResponse: false // Use SSE streaming
         });
-        
+
         await this.mcpServer.connect(this.transport);
         console.log("✅ Persistent MCP server and transport initialized");
     }
@@ -191,14 +191,39 @@ export class LauncherProxyService {
                         fullCommand = [...commandParts, ...serviceConfig.options];
                     }
 
-                    services[serviceConfig.name] = fullCommand;
+                    // Store install commands if present - handle different formats
+                    let installCommands = null;
+                    if (serviceConfig.install) {
+                        if (Array.isArray(serviceConfig.install)) {
+                            // Check if it's an array of characters (YAML parsing issue)
+                            if (serviceConfig.install.length > 0 && typeof serviceConfig.install[0] === 'string' && serviceConfig.install[0].length === 1) {
+                                // Join character array back into string
+                                installCommands = serviceConfig.install.join('');
+                            } else {
+                                // Normal array of commands
+                                installCommands = [...serviceConfig.install];
+                            }
+                        } else if (typeof serviceConfig.install === 'string') {
+                            installCommands = serviceConfig.install;
+                        } else {
+                            installCommands = serviceConfig.install;
+                        }
+                    }
+
+                    services[serviceConfig.name] = {
+                        command: fullCommand,
+                        install: installCommands
+                    };
                 }
             }
         } else if (typeof mcpServicesConfig === 'object' && mcpServicesConfig !== null) {
             // Old format: object with service names as keys and arrays as values
             for (const [serviceName, command] of Object.entries(mcpServicesConfig)) {
                 if (Array.isArray(command)) {
-                    services[serviceName] = command;
+                    services[serviceName] = {
+                        command: command,
+                        install: null
+                    };
                 }
             }
         }
@@ -206,8 +231,114 @@ export class LauncherProxyService {
         return services;
     }
 
-    async startService(serviceName, command) {
+    async startService(serviceName, serviceConfig) {
         console.log(`🔧 Starting ${serviceName} service...`);
+
+        // Handle install commands if present
+        if (serviceConfig.install) {
+            console.log(`📦 Installing packages for ${serviceName}...`);
+            console.log(`📋 Install config type: ${typeof serviceConfig.install}`);
+            console.log(`📋 Install config value:`, JSON.stringify(serviceConfig.install, null, 2));
+
+            try {
+                // Handle both array format and multiline string format
+                let installCommands = [];
+
+                if (Array.isArray(serviceConfig.install)) {
+                    console.log(`📋 Processing as array with ${serviceConfig.install.length} commands`);
+                    installCommands = serviceConfig.install;
+                } else if (typeof serviceConfig.install === 'string') {
+                    console.log(`📋 Processing as string, length: ${serviceConfig.install.length}`);
+                    console.log(`📋 Contains newlines: ${serviceConfig.install.includes('\n')}`);
+                    console.log(`📋 Contains sh -c: ${serviceConfig.install.includes('sh -c')}`);
+                    // For multiline string, execute as a shell script
+                    installCommands = [serviceConfig.install];
+                }
+
+                console.log(`📋 Total install commands to execute: ${installCommands.length}`);
+
+                for (let i = 0; i < installCommands.length; i++) {
+                    const installCmd = installCommands[i];
+                    console.log(`🔄 [${i + 1}/${installCommands.length}] Starting install command...`);
+                    console.log(`📝 Command preview: ${installCmd.substring(0, 100)}${installCmd.length > 100 ? '...' : ''}`);
+
+                    const startTime = Date.now();
+                    let installProc;
+
+                    if (typeof installCmd === 'string' && (installCmd.includes('\n') || installCmd.includes('sh -c'))) {
+                        console.log(`🐚 Executing as shell script with 'sh -c'`);
+                        installProc = spawn('sh', ['-c', installCmd], {
+                            stdio: ['pipe', 'pipe', 'pipe']
+                        });
+                    } else {
+                        console.log(`⚡ Executing as parsed command`);
+                        const installParts = installCmd.split(/\s+/);
+                        console.log(`📝 Parsed parts:`, installParts);
+                        installProc = spawn(installParts[0], installParts.slice(1), {
+                            stdio: ['pipe', 'pipe', 'pipe']
+                        });
+                    }
+
+                    console.log(`🚀 Process spawned with PID: ${installProc.pid}`);
+
+                    await new Promise((resolve, reject) => {
+                        let stdout = '';
+                        let stderr = '';
+                        let outputLines = 0;
+
+                        installProc.stdout.on('data', (data) => {
+                            stdout += data.toString();
+                            const lines = data.toString().split('\n').filter(line => line.trim());
+                            outputLines += lines.length;
+                            console.log(`📤 [STDOUT] ${lines.join('\n📤 [STDOUT] ')}`);
+                        });
+
+                        installProc.stderr.on('data', (data) => {
+                            stderr += data.toString();
+                            const lines = data.toString().split('\n').filter(line => line.trim());
+                            console.log(`📥 [STDERR] ${lines.join('\n📥 [STDERR] ')}`);
+                        });
+
+                        installProc.on('close', (code) => {
+                            const duration = Date.now() - startTime;
+                            console.log(`🏁 Process finished in ${duration}ms with exit code: ${code}`);
+                            console.log(`📊 Output lines captured: ${outputLines}`);
+
+                            if (code === 0) {
+                                console.log(`  ✅ Install command [${i + 1}/${installCommands.length}] completed successfully`);
+                                resolve();
+                            } else {
+                                console.error(`  ❌ Install command [${i + 1}/${installCommands.length}] failed with exit code ${code}`);
+                                console.error(`📋 Final stderr:`, stderr);
+                                reject(new Error(`Install failed with code ${code}: ${stderr}`));
+                            }
+                        });
+
+                        installProc.on('error', (error) => {
+                            const duration = Date.now() - startTime;
+                            console.error(`💥 Process error after ${duration}ms:`, error);
+                            reject(error);
+                        });
+
+                        // Add timeout protection
+                        setTimeout(() => {
+                            if (!installProc.killed) {
+                                console.log(`⏰ Install command taking longer than 5 minutes, still running...`);
+                            }
+                        }, 5 * 60 * 1000); // 5 minutes
+                    });
+                }
+            } catch (error) {
+                console.error(`❌ Failed to run install commands for ${serviceName}:`, error.message);
+                console.error(`📋 Error stack:`, error.stack);
+                // Continue with service startup even if install fails
+            }
+
+            console.log(`✅ Package installation completed for ${serviceName}`);
+        }
+
+        // Get the actual command to run
+        const command = serviceConfig.command || serviceConfig;
 
         const proc = spawn(command[0], command.slice(1), {
             stdio: ['pipe', 'pipe', 'pipe']
@@ -301,11 +432,11 @@ export class LauncherProxyService {
 
                 // Dynamically register all tools from this service
                 this.registerServiceTools(serviceName, service.tools);
-                
+
                 // Invalidate caches when services are initialized
                 this.invalidateHealthCache();
                 this.invalidateServicesCache();
-                
+
                 // Notify about resource and prompt changes too
                 this.notifyResourceListChanged();
                 this.notifyPromptListChanged();
@@ -326,16 +457,16 @@ export class LauncherProxyService {
 
     registerServiceTools(serviceName, tools) {
         console.log(`🔧 registerServiceTools called for ${serviceName} with ${tools.length} tools. Current registered count: ${this.registeredTools.size}`);
-        
+
         const oldToolCount = this.registeredTools.size;
-        
+
         // Just track the tools, they will be registered to server instances dynamically
         for (const tool of tools) {
             const toolName = `${serviceName}_${tool.name}`;
             this.registeredTools.add(toolName);
         }
         console.log(`🎯 Tracked ${tools.length} tools for service ${serviceName}. Total unique tools: ${this.registeredTools.size}`);
-        
+
         // Notify all active servers about tool list changes
         if (this.registeredTools.size !== oldToolCount) {
             this.notifyToolListChanged();
@@ -348,15 +479,15 @@ export class LauncherProxyService {
         if (this.toolListChangeTimeout) {
             clearTimeout(this.toolListChangeTimeout);
         }
-        
+
         this.toolListChangeTimeout = setTimeout(() => {
             const toolListHash = this.getToolListHash();
             if (toolListHash !== this.lastToolListHash) {
                 this.lastToolListHash = toolListHash;
                 // Send to all servers in parallel for better performance
                 Promise.all(
-                    Array.from(this.activeServers).map(server => 
-                        Promise.resolve().then(() => server.sendToolListChanged()).catch(error => 
+                    Array.from(this.activeServers).map(server =>
+                        Promise.resolve().then(() => server.sendToolListChanged()).catch(error =>
                             console.error('Error notifying tool list changed:', error.message)
                         )
                     )
@@ -371,14 +502,14 @@ export class LauncherProxyService {
         if (this.resourceListChangeTimeout) {
             clearTimeout(this.resourceListChangeTimeout);
         }
-        
+
         this.resourceListChangeTimeout = setTimeout(() => {
             const resourceListHash = this.getResourceListHash();
             if (resourceListHash !== this.lastResourceListHash) {
                 this.lastResourceListHash = resourceListHash;
                 Promise.all(
-                    Array.from(this.activeServers).map(server => 
-                        Promise.resolve().then(() => server.sendResourceListChanged()).catch(error => 
+                    Array.from(this.activeServers).map(server =>
+                        Promise.resolve().then(() => server.sendResourceListChanged()).catch(error =>
                             console.error('Error notifying resource list changed:', error.message)
                         )
                     )
@@ -392,14 +523,14 @@ export class LauncherProxyService {
         if (this.promptListChangeTimeout) {
             clearTimeout(this.promptListChangeTimeout);
         }
-        
+
         this.promptListChangeTimeout = setTimeout(() => {
             const promptListHash = this.getPromptListHash();
             if (promptListHash !== this.lastPromptListHash) {
                 this.lastPromptListHash = promptListHash;
                 Promise.all(
-                    Array.from(this.activeServers).map(server => 
-                        Promise.resolve().then(() => server.sendPromptListChanged()).catch(error => 
+                    Array.from(this.activeServers).map(server =>
+                        Promise.resolve().then(() => server.sendPromptListChanged()).catch(error =>
                             console.error('Error notifying prompt list changed:', error.message)
                         )
                     )
@@ -414,13 +545,13 @@ export class LauncherProxyService {
     }
 
     getResourceListHash() {
-        return Array.from(this.processes.keys()).filter(name => 
+        return Array.from(this.processes.keys()).filter(name =>
             this.processes.get(name).initialized
         ).sort().join(',');
     }
 
     getPromptListHash() {
-        return Array.from(this.processes.keys()).filter(name => 
+        return Array.from(this.processes.keys()).filter(name =>
             this.processes.get(name).initialized
         ).sort().join(',');
     }
@@ -432,10 +563,10 @@ export class LauncherProxyService {
             data: data ? `${message} ${typeof data === 'string' ? data : JSON.stringify(data)}` : message,
             logger: 'mcp-launcher'
         };
-        
+
         // Send to all servers in parallel
         Promise.all(
-            Array.from(this.activeServers).map(server => 
+            Array.from(this.activeServers).map(server =>
                 Promise.resolve().then(() => server.sendLoggingMessage(logMessage)).catch(() => {
                     // Ignore errors when sending logs to avoid infinite loops
                 })
@@ -463,48 +594,64 @@ export class LauncherProxyService {
         const zodFields = {};
 
         for (const [fieldName, fieldSchema] of Object.entries(inputSchema.properties)) {
-            let zodField;
+            try {
+                let zodField;
 
-            switch (fieldSchema.type) {
-                case 'string':
-                    zodField = z.string();
-                    break;
-                case 'number':
-                    zodField = z.number();
-                    break;
-                case 'integer':
-                    zodField = z.number().int();
-                    break;
-                case 'boolean':
-                    zodField = z.boolean();
-                    break;
-                case 'array':
-                    if (fieldSchema.items?.type === 'string') {
-                        zodField = z.array(z.string());
-                    } else if (fieldSchema.items?.type === 'object') {
-                        zodField = z.array(z.any());
-                    } else {
-                        zodField = z.array(z.any());
+                switch (fieldSchema.type) {
+                    case 'string':
+                        zodField = z.string();
+                        break;
+                    case 'number':
+                        zodField = z.number();
+                        break;
+                    case 'integer':
+                        zodField = z.number().int();
+                        break;
+                    case 'boolean':
+                        zodField = z.boolean();
+                        break;
+                    case 'array':
+                        if (fieldSchema.items?.type === 'string') {
+                            zodField = z.array(z.string());
+                        } else if (fieldSchema.items?.type === 'object') {
+                            zodField = z.array(z.any());
+                        } else {
+                            zodField = z.array(z.any());
+                        }
+                        break;
+                    case 'object':
+                        zodField = z.any(); // For complex objects, just accept any
+                        break;
+                    default:
+                        zodField = z.any();
+                }
+
+                // Add description if available
+                if (fieldSchema.description) {
+                    try {
+                        zodField = zodField.describe(fieldSchema.description);
+                    } catch (error) {
+                        console.warn(`Failed to add description to field ${fieldName}:`, error.message);
                     }
-                    break;
-                case 'object':
-                    zodField = z.any(); // For complex objects, just accept any
-                    break;
-                default:
-                    zodField = z.any();
-            }
+                }
 
-            // Add description if available
-            if (fieldSchema.description) {
-                zodField = zodField.describe(fieldSchema.description);
-            }
+                // Make optional if not required - safer approach
+                const isRequired = inputSchema.required && inputSchema.required.includes(fieldName);
+                if (!isRequired) {
+                    try {
+                        zodField = zodField.optional();
+                    } catch (error) {
+                        console.warn(`Failed to make field ${fieldName} optional, using z.any():`, error.message);
+                        zodField = z.any().optional();
+                    }
+                }
 
-            // Make optional if not required
-            if (!inputSchema.required || !inputSchema.required.includes(fieldName)) {
-                zodField = zodField.optional();
+                zodFields[fieldName] = zodField;
+            } catch (error) {
+                console.error(`Error processing field ${fieldName}:`, error.message);
+                // Fallback to z.any() for problematic fields
+                zodFields[fieldName] = z.any().optional();
             }
-
-            zodFields[fieldName] = zodField;
         }
 
         return zodFields;
@@ -522,7 +669,10 @@ export class LauncherProxyService {
 
             try {
                 const response = JSON.parse(line);
-                DebugLogger.logMCPResponse(serviceName, response);
+
+                if (this.config.server.log_level.toLowerCase() == "debug") {
+                    DebugLogger.logMCPResponse(serviceName, response);
+                }
 
                 // Handle pending requests
                 if (response.id && this.pendingRequests.has(response.id)) {
@@ -587,13 +737,13 @@ export class LauncherProxyService {
             name: "dynamic-mcp-bridge",
             version: "1.0.0",
         });
-        
+
         // Track this server for notifications - only one persistent instance now
         this.activeServers.add(server);
-        
+
         // Register all tools from all services (cached registration - no verbose logging)
         this.registerAllToolsCached(server);
-        
+
         // Add specific resources for each service dynamically
         for (const [serviceName, service] of this.processes) {
             if (service.initialized) {
@@ -612,7 +762,7 @@ export class LauncherProxyService {
                 });
             }
         }
-        
+
         // Add prompts handler with argument support
         server.prompt("help", "Get help for a specific service", {
             service: {
@@ -623,18 +773,18 @@ export class LauncherProxyService {
         }, async (args) => {
             const serviceName = args.service;
             const service = this.processes.get(serviceName);
-            
+
             if (!service || !service.initialized) {
                 throw new Error(`Service ${serviceName} not available`);
             }
-            
+
             let helpText = `Help for ${serviceName} service:\n\n`;
             helpText += `Tools available:\n`;
-            
+
             for (const tool of service.tools) {
                 helpText += `- ${serviceName}_${tool.name}: ${tool.description}\n`;
             }
-            
+
             return {
                 messages: [{
                     role: "user",
@@ -645,7 +795,7 @@ export class LauncherProxyService {
                 }]
             };
         });
-        
+
         // Add general prompts handler
         server.prompt("*", "List all available prompts", async () => {
             const prompts = [];
@@ -654,11 +804,11 @@ export class LauncherProxyService {
                 description: "Get help for a specific service",
                 arguments: [{
                     name: "service",
-                    description: "The service name to get help for", 
+                    description: "The service name to get help for",
                     required: true
                 }]
             });
-            
+
             for (const [serviceName, service] of this.processes) {
                 if (service.initialized) {
                     prompts.push({
@@ -670,15 +820,15 @@ export class LauncherProxyService {
             }
             return prompts;
         });
-        
+
         // Note: Advanced handlers like completion and roots would need to be implemented
         // using server.server.setRequestHandler() with appropriate schemas, but are
         // not essential for basic MCP functionality
-        
+
         // No cleanup needed for persistent server
-        
+
         return server;
-    }    
+    }
 
     async handleMCPRequest(req, res) {
         const requestId = req.requestId || 'unknown';
@@ -747,9 +897,9 @@ export class LauncherProxyService {
         console.log('🚀 Starting dynamic MCP bridge...');
         console.log(`📋 Services to start: ${Object.keys(this.services).join(", ")}`);
 
-        for (const [serviceName, command] of Object.entries(this.services)) {
+        for (const [serviceName, serviceConfig] of Object.entries(this.services)) {
             try {
-                await this.startService(serviceName, command);
+                await this.startService(serviceName, serviceConfig);
                 this.sendLogToClients('info', `Successfully started service: ${serviceName}`);
             } catch (error) {
                 console.error(`❌ Failed to start ${serviceName}:`, error.message);
@@ -767,12 +917,12 @@ export class LauncherProxyService {
     // Add health monitoring with caching
     getHealthStatus() {
         const now = Date.now();
-        
+
         // Return cached result if still valid
         if (this.cachedHealthStatus && (now - this.lastHealthStatusUpdate) < this.healthStatusCacheTTL) {
             return this.cachedHealthStatus;
         }
-        
+
         // Compute new health status
         const services = {};
         for (const [serviceName, service] of this.processes) {
@@ -783,7 +933,7 @@ export class LauncherProxyService {
                 uptime: service.startTime ? now - service.startTime : 0
             };
         }
-        
+
         this.cachedHealthStatus = {
             status: 'healthy',
             totalTools: this.registeredTools.size,
@@ -792,7 +942,7 @@ export class LauncherProxyService {
             services: services,
             timestamp: new Date().toISOString()
         };
-        
+
         this.lastHealthStatusUpdate = now;
         return this.cachedHealthStatus;
     }
@@ -800,19 +950,19 @@ export class LauncherProxyService {
     // Add service restart capability
     async restartService(serviceName) {
         console.log(`🔄 Restarting service: ${serviceName}`);
-        
+
         // Stop existing service
         const existingService = this.processes.get(serviceName);
         if (existingService && existingService.proc) {
             existingService.proc.kill();
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        
+
         // Start service again
-        const command = this.services[serviceName];
-        if (command) {
+        const serviceConfig = this.services[serviceName];
+        if (serviceConfig) {
             try {
-                await this.startService(serviceName, command);
+                await this.startService(serviceName, serviceConfig);
                 this.sendLogToClients('info', `Successfully restarted service: ${serviceName}`);
                 return true;
             } catch (error) {
@@ -821,19 +971,19 @@ export class LauncherProxyService {
                 return false;
             }
         }
-        
+
         return false;
     }
 
     // Get services list with caching
     getServicesList() {
         const now = Date.now();
-        
+
         // Return cached result if still valid
         if (this.cachedServicesList && (now - this.lastServicesListUpdate) < this.servicesListCacheTTL) {
             return this.cachedServicesList;
         }
-        
+
         // Compute new services list
         const services = {};
         for (const [name, service] of this.processes) {
@@ -843,7 +993,7 @@ export class LauncherProxyService {
                 uptime: now - service.startTime
             };
         }
-        
+
         this.cachedServicesList = services;
         this.lastServicesListUpdate = now;
         return services;
@@ -856,26 +1006,26 @@ export class LauncherProxyService {
         this.router.post("/", async (req, res) => {
             this.handleMCPRequest(req, res)
         });
-        
+
         // Add health endpoint for monitoring
         this.router.get("/health", (_req, res) => {
             res.json(this.getHealthStatus());
         });
-        
+
         // Add service management endpoints
         this.router.post("/restart/:serviceName", async (req, res) => {
             const serviceName = req.params.serviceName;
             const success = await this.restartService(serviceName);
-            res.json({ 
-                success, 
+            res.json({
+                success,
                 message: success ? `Service ${serviceName} restarted` : `Failed to restart ${serviceName}`
             });
         });
-        
+
         this.router.get("/services", (_req, res) => {
             res.json(this.getServicesList());
         });
-        
+
         console.log("MCP launcher routes initialized");
     }
 

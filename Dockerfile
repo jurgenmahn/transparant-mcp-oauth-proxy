@@ -11,8 +11,11 @@ RUN --mount=type=cache,target=/var/cache/apt \
         libldap2-dev libyaml-0-2 brotli libpcre2-8-0 \
         libpcre3-dev libpcre3 \
         libssl3 libgeoip1 libxslt1.1 \ 
-        ca-certificates build-essential make gcc g++ python3 dnsutils nano  redis-server redis-tools && \
-        update-ca-certificates
+        ca-certificates build-essential make gcc g++ python3 dnsutils nano  redis-server redis-tools xvfb wget && \
+        update-ca-certificates && \
+        cd /tmp && \
+        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+        apt install -y ./google-chrome-stable_current_amd64.deb
 
 FROM root AS hydra-downloader
 ARG HYDRA_VERSION=2.3.0
@@ -37,7 +40,8 @@ RUN export NVM_DIR="/nvm" && \
     nvm use 24 && \
     npm install -g npm && \
     npm install -g js-yaml && \
-    npm install --production && \
+    npm install --production && \    
+    #npm run setup-playwright && \
     echo "PATH=/nvm/versions/node/$(node --version)/bin" >> /.buildvars-nodejs-builder && \
     echo "NODE_PATH=/nvm/versions/node/$(node --version)/lib/node_modules" >> /.buildvars-nodejs-builder
 

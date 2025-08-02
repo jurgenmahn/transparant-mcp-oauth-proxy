@@ -10,11 +10,10 @@
   "dependencies": {
     "@bytebase/dbhub": "latest",
     "@cyanheads/git-mcp-server": "latest",
-    "@executeautomation/playwright-mcp-server": "latest",
+    "@playwright/mcp": "latest",
     "@modelcontextprotocol/sdk": "latest",
     "@modelcontextprotocol/server-filesystem": "latest",
     "@modelcontextprotocol/server-memory": "latest",
-    "@modelcontextprotocol/server-puppeteer": "latest",
     "@tokenizin/mcp-npx-fetch": "latest",
     "axios": "latest",
     "bcrypt": "latest",
@@ -26,11 +25,12 @@
     "redis": "^5.6.1",
     "undici": "latest",
     "yaml": "^2.8.0",
-    "zod": "latest"
+    "zod": "latest",
+    "cross-env": "^7.0.3"  
   },
   "devDependencies": {
     "concurrently": "latest",
-    "nodemon": "latest"
+    "nodemon": "latest"   
   },
   "engines": {
     "node": ">=20.0.0"

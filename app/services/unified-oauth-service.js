@@ -1,3 +1,15 @@
+/**
+ * Unified OAuth Service
+ * 
+ * Comprehensive OAuth2/OpenID Connect service that provides:
+ * - Dynamic client registration
+ * - OAuth2 authorization flow (login/consent)
+ * - Token management and introspection
+ * - OpenID Connect discovery endpoints
+ * - Session management with Redis fallback
+ * - Static file serving for OAuth UI
+ */
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import fs from 'fs';
@@ -13,6 +25,12 @@ import { createClient } from 'redis';
 const dnsPromises = dns.promises;
 
 export class UnifiedOAuthService {
+    /**
+     * Initialize the Unified OAuth Service
+     * Loads configuration, validates required settings, sets up Redis connection
+     * 
+     * @param {string} appPath - Application root path for loading templates and config
+     */
     constructor(appPath) {
         this.appPath = appPath;
         this.router = express.Router();
@@ -20,59 +38,106 @@ export class UnifiedOAuthService {
         this.redisClient = null;
         this.sessions = new Map(); // Fallback in-memory session store
 
-        // Load config
+        this.loadConfig();
+        this.normalizeConfig();
+        this.setupMiddleware();
+        this.setupRoutes();
+    }
+
+    // ================================================================
+    // CONFIGURATION MANAGEMENT
+    // ================================================================
+
+    /**
+     * Load and validate configuration from local.yaml
+     * Throws error if required OAuth configuration is missing
+     */
+    loadConfig() {
         try {
             this.config = YAML.parse(fs.readFileSync(this.appPath + '/config/local.yaml', 'utf-8'));
 
-            // Validate required config exists
-            if (!this.config.oauth) {
-                throw new Error('OAuth configuration missing from local.yaml');
-            }
-            if (!this.config.oauth.session_secret) {
-                throw new Error('oauth.session_secret missing from local.yaml');
-            }
-            if (!this.config.cors) {
-                throw new Error('cors configuration missing from local.yaml');
-            }
-            if (!this.config.cors.allowed_origins) {
-                throw new Error('cors.allowed_origins missing from local.yaml');
-            }
-            if (!this.config.redis) {
-                throw new Error('redis configuration missing from local.yaml');
-            }
-            if (!this.config.redis.host) {
-                throw new Error('redis.host missing from local.yaml');
-            }
-            if (!this.config.redis.port) {
-                throw new Error('redis.port missing from local.yaml');
-            }
+            // Validate required OAuth configuration
+            this.validateRequiredConfig();
 
         } catch (error) {
             console.error('Warning: Could not load OAuth config:', error.message);
             throw new Error('Warning: Could not load OAuth config: ' + error.message);
         }
-
-        // Normalize configured domains and scopes to avoid mismatches due to whitespace
-        if (Array.isArray(this.config.oauth.allowed_redirect_domains)) {
-            this.config.oauth.allowed_redirect_domains = this.config.oauth.allowed_redirect_domains.map(d => d.trim());
-        }
-        if (Array.isArray(this.config.oauth.allowed_scopes)) {
-            this.config.oauth.allowed_scopes = this.config.oauth.allowed_scopes.map(s => s.trim());
-        }
-        if (this.config.cors && Array.isArray(this.config.cors.allowed_origins)) {
-            this.config.cors.allowed_origins = this.config.cors.allowed_origins.map(o => o.trim());
-        }
-
-        this.setupMiddleware();
-        this.setupRoutes();
     }
 
+    /**
+     * Validate that all required configuration sections exist
+     * Required: oauth.session_secret, cors.allowed_origins, redis settings
+     */
+    validateRequiredConfig() {
+        const requiredPaths = [
+            'oauth',
+            'oauth.session_secret', 
+            'cors',
+            'cors.allowed_origins',
+            'redis',
+            'redis.host',
+            'redis.port'
+        ];
+
+        for (const path of requiredPaths) {
+            if (!this.getNestedConfig(path)) {
+                throw new Error(`${path} missing from local.yaml`);
+            }
+        }
+    }
+
+    /**
+     * Get nested configuration value by dot notation path
+     * @param {string} path - Dot notation path (e.g., 'oauth.session_secret')
+     * @returns {any} Configuration value or null if not found
+     */
+    getNestedConfig(path) {
+        return path.split('.').reduce((obj, key) => obj?.[key], this.config);
+    }
+
+    /**
+     * Normalize configuration arrays to avoid whitespace issues
+     * Trims all string values in domain and scope arrays
+     */
+    normalizeConfig() {
+        // Normalize redirect domains
+        if (Array.isArray(this.config.oauth?.allowed_redirect_domains)) {
+            this.config.oauth.allowed_redirect_domains = 
+                this.config.oauth.allowed_redirect_domains.map(d => d.trim());
+        }
+
+        // Normalize allowed scopes  
+        if (Array.isArray(this.config.oauth?.allowed_scopes)) {
+            this.config.oauth.allowed_scopes = 
+                this.config.oauth.allowed_scopes.map(s => s.trim());
+        }
+
+        // Normalize CORS origins
+        if (Array.isArray(this.config.cors?.allowed_origins)) {
+            this.config.cors.allowed_origins = 
+                this.config.cors.allowed_origins.map(o => o.trim());
+        }
+    }
+
+    // ================================================================
+    // SERVICE INITIALIZATION
+    // ================================================================
+
+    /**
+     * Initialize the OAuth service
+     * Sets up Redis connection for session storage
+     */
     async initialize() {
         console.log('Unified OAuth Service initializing...');
         await this.connectRedis();
         console.log('Unified OAuth Service initialized');
     }
 
+    /**
+     * Establish Redis connection for session storage
+     * Falls back to in-memory sessions if Redis unavailable
+     */
     async connectRedis() {
         try {
             this.redisClient = createClient({
@@ -84,6 +149,7 @@ export class UnifiedOAuthService {
                 }
             });
 
+            // Handle Redis connection events
             this.redisClient.on('error', (err) => {
                 console.error('Redis Client Error:', err);
                 this.redisClient = null; // Fallback to in-memory
@@ -100,7 +166,28 @@ export class UnifiedOAuthService {
         }
     }
 
-    // Session management with Redis fallback
+    /**
+     * Gracefully shutdown the service
+     * Closes Redis connection if active
+     */
+    async shutdown() {
+        if (this.redisClient) {
+            await this.redisClient.quit();
+        }
+    }
+
+    // ================================================================
+    // SESSION MANAGEMENT
+    // ================================================================
+
+    /**
+     * Store session data with TTL
+     * Uses Redis if available, falls back to in-memory storage
+     * 
+     * @param {string} sessionId - Unique session identifier
+     * @param {object} sessionData - Session data to store
+     * @param {number} ttlSeconds - Time to live in seconds (default: 3600)
+     */
     async setSession(sessionId, sessionData, ttlSeconds = 3600) {
         try {
             if (this.redisClient) {
@@ -108,7 +195,7 @@ export class UnifiedOAuthService {
                 await this.redisClient.setEx(sessionKey, ttlSeconds, JSON.stringify(sessionData));
                 console.log(`[REDIS] Session ${sessionId} stored with TTL ${ttlSeconds}s`);
             } else {
-                // Fallback to in-memory
+                // Fallback to in-memory with expiration
                 this.sessions.set(sessionId, {
                     ...sessionData,
                     expires: Date.now() + (ttlSeconds * 1000)
@@ -117,7 +204,7 @@ export class UnifiedOAuthService {
             }
         } catch (error) {
             console.error('Error setting session:', error);
-            // Fallback to in-memory on Redis error
+            // Emergency fallback to in-memory
             this.sessions.set(sessionId, {
                 ...sessionData,
                 expires: Date.now() + (ttlSeconds * 1000)
@@ -125,6 +212,13 @@ export class UnifiedOAuthService {
         }
     }
 
+    /**
+     * Retrieve session data by session ID
+     * Automatically handles expiration for in-memory sessions
+     * 
+     * @param {string} sessionId - Session identifier to retrieve
+     * @returns {object|null} Session data or null if not found/expired
+     */
     async getSession(sessionId) {
         try {
             if (this.redisClient) {
@@ -136,7 +230,7 @@ export class UnifiedOAuthService {
                 }
                 return null;
             } else {
-                // Fallback to in-memory
+                // In-memory fallback with expiration check
                 const session = this.sessions.get(sessionId);
                 if (session && session.expires > Date.now()) {
                     console.log(`[MEMORY] Session ${sessionId} retrieved`);
@@ -149,12 +243,18 @@ export class UnifiedOAuthService {
             }
         } catch (error) {
             console.error('Error getting session:', error);
-            // Fallback to in-memory on Redis error
+            // Emergency fallback to in-memory
             const session = this.sessions.get(sessionId);
             return (session && session.expires > Date.now()) ? session : null;
         }
     }
 
+    /**
+     * Delete session data
+     * Removes from Redis or in-memory storage
+     * 
+     * @param {string} sessionId - Session identifier to delete
+     */
     async deleteSession(sessionId) {
         try {
             if (this.redisClient) {
@@ -162,18 +262,26 @@ export class UnifiedOAuthService {
                 await this.redisClient.del(sessionKey);
                 console.log(`[REDIS] Session ${sessionId} deleted`);
             } else {
-                // Fallback to in-memory
                 this.sessions.delete(sessionId);
                 console.log(`[MEMORY] Session ${sessionId} deleted`);
             }
         } catch (error) {
             console.error('Error deleting session:', error);
-            // Fallback to in-memory on Redis error
+            // Emergency fallback to in-memory
             this.sessions.delete(sessionId);
         }
     }
 
+    // ================================================================
+    // MIDDLEWARE SETUP
+    // ================================================================
+
+    /**
+     * Configure Express middleware for the OAuth router
+     * Includes CORS, body parsing, static file serving, and cookie parsing
+     */
     setupMiddleware() {
+        // Body parsing for form submissions
         this.router.use(bodyParser.urlencoded({ extended: false }));
 
         // Enhanced CORS middleware (replacing APISIX CORS)
@@ -181,6 +289,7 @@ export class UnifiedOAuthService {
             const origin = req.headers.origin;
             const allowedOrigins = this.config.cors?.allowed_origins || [];
 
+            // Only set CORS origin if it's in the allowed list
             if (allowedOrigins.includes(origin)) {
                 res.setHeader('Access-Control-Allow-Origin', origin);
             }
@@ -195,13 +304,13 @@ export class UnifiedOAuthService {
             next();
         });
 
-        // Static file serving (replacing nginx on port 9280)
+        // Static file serving (replacing nginx)
         this.router.use('/static', express.static(`${this.appPath}/../static`));
         this.router.use('/static', express.static('templates'));
         this.router.use('/static', express.static('public'));
         this.router.use(express.static('public'));
 
-        // Parse cookies for session management
+        // Cookie parsing for session management
         this.router.use((req, res, next) => {
             req.cookies = {};
             if (req.headers.cookie) {
@@ -214,7 +323,16 @@ export class UnifiedOAuthService {
         });
     }
 
-    // Template loading and rendering utilities
+    // ================================================================
+    // TEMPLATE UTILITIES
+    // ================================================================
+
+    /**
+     * Load HTML template from templates directory
+     * 
+     * @param {string} templateName - Template filename (e.g., 'login.html')
+     * @returns {string|null} Template content or null if not found
+     */
     loadTemplate(templateName) {
         try {
             const templatePath = `${this.appPath}/templates/${templateName}`;
@@ -225,13 +343,21 @@ export class UnifiedOAuthService {
         }
     }
 
+    /**
+     * Render template with variable substitution
+     * Replaces {{variable}} placeholders with provided values
+     * 
+     * @param {string} templateName - Template filename
+     * @param {object} variables - Key-value pairs for template variables
+     * @returns {string} Rendered HTML template
+     */
     renderTemplate(templateName, variables = {}) {
         let template = this.loadTemplate(templateName);
         if (!template) {
             return '<html><body><h1>Template not found</h1></body></html>';
         }
 
-        // Replace variables in template
+        // Replace {{variable}} placeholders with values
         for (const [key, value] of Object.entries(variables)) {
             template = template.replace(new RegExp(`{{${key}}}`, 'g'), value);
         }
@@ -239,7 +365,18 @@ export class UnifiedOAuthService {
         return template;
     }
 
-    // Validation utilities
+    // ================================================================
+    // VALIDATION UTILITIES
+    // ================================================================
+
+    /**
+     * Validate redirect URI against allowed domains
+     * Supports exact domain matches and subdomain matches
+     * 
+     * @param {string} redirectUri - URI to validate
+     * @param {string[]} allowedDomains - Array of allowed domain strings
+     * @returns {boolean} True if redirect URI is allowed
+     */
     async validateRedirectUri(redirectUri, allowedDomains) {
         if (!redirectUri) return false;
 
@@ -257,6 +394,13 @@ export class UnifiedOAuthService {
         }
     }
 
+    /**
+     * Validate requested scopes against allowed scopes
+     * 
+     * @param {string} requestedScopes - Space-separated scope string
+     * @param {string[]} allowedScopes - Array of allowed scope strings
+     * @returns {boolean} True if all requested scopes are allowed
+     */
     validateScopes(requestedScopes, allowedScopes) {
         if (!requestedScopes) return false;
 
@@ -264,7 +408,340 @@ export class UnifiedOAuthService {
         return scopes.every(scope => allowedScopes.includes(scope));
     }
 
-    // OAuth2 Authorization endpoint handler
+    /**
+     * Validate user credentials against configured users
+     * Uses bcrypt for secure password comparison
+     * 
+     * @param {string} email - User email address
+     * @param {string} password - Plain text password
+     * @returns {boolean} True if credentials are valid
+     */
+    async validateUser(email, password) {
+        try {
+            if (!this.config.users || !Array.isArray(this.config.users)) {
+                return false;
+            }
+
+            const user = this.config.users.find(u => u.email === email);
+            if (!user) {
+                return false;
+            }
+
+            // Compare password with bcrypt hash
+            return await bcrypt.compare(password, user.password_hash);
+        } catch (error) {
+            console.error('User validation error:', error);
+            return false;
+        }
+    }
+
+    // ================================================================
+    // ROUTE SETUP
+    // ================================================================
+
+    /**
+     * Configure all OAuth2 and OpenID Connect routes
+     * Includes authorization, token, discovery, and management endpoints
+     */
+    setupRoutes() {
+        // Root level APISIX compatibility redirect
+        this.router.get('/authorize', (req, res) => {
+            // Redirect /authorize to /oauth/oauth2/auth (APISIX compatibility)
+            const queryString = new URLSearchParams(req.query).toString();
+            const redirectUrl = `/oauth/oauth2/auth${queryString ? '?' + queryString : ''}`;
+            console.log(`[APISIX-COMPAT] Redirecting /authorize to ${redirectUrl}`);
+            res.redirect(redirectUrl);
+        });
+
+        // Health check endpoint
+        this.router.get('/health', (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                status: 'healthy', 
+                timestamp: new Date().toISOString()
+            }));
+        });
+
+        // Debug endpoint placeholder (actual implementation in server.js for debug data access)
+        this.router.get('/debug', (req, res) => {
+            res.writeHead(501, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                error: 'Debug endpoint temporarily moved to server.js',
+                message: 'Will be refactored'
+            }));
+        });
+
+        // OAuth2 Core Endpoints
+        this.setupOAuth2Endpoints();
+        
+        // OpenID Connect Discovery Endpoints
+        this.setupDiscoveryEndpoints();
+        
+        // User Interface Endpoints (Login/Consent)
+        this.setupUIEndpoints();
+
+        // API Documentation
+        this.setupDocumentationEndpoints();
+    }
+
+    /**
+     * Setup core OAuth2 endpoints for authorization and token management
+     */
+    setupOAuth2Endpoints() {
+        // OAuth2 Authorization endpoint - handles user authorization requests
+        this.router.get('/oauth2/auth', this.handleOAuth2Auth);
+
+        // OAuth2 Client Registration endpoint - dynamic client registration
+        this.router.post('/register', this.handleOAuth2Register);
+
+        // OAuth2 Issuer endpoint - OpenID Connect Discovery
+        this.router.get('/oauth', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in oauth issuer endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch OAuth issuer configuration' }));
+            }
+        });
+
+        // OAuth2 Token endpoint - exchange authorization code for tokens
+        this.router.post('/oauth2/token', async (req, res) => {
+            try {
+                // Convert body to proper format for undici
+                let bodyData;
+                if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+                    bodyData = new URLSearchParams(req.body).toString();
+                } else {
+                    bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+                }
+
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/token`, {
+                    method: 'POST',
+                    headers: {
+                        ...req.headers,
+                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
+                    },
+                    body: bodyData
+                });
+
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in token endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'internal_server_error' }));
+            }
+        });
+
+        // UserInfo endpoint - get user information using access token
+        this.router.get('/userinfo', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/userinfo`, {
+                    method: 'GET',
+                    headers: {
+                        ...req.headers,
+                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
+                    }
+                });
+
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in userinfo endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'internal_server_error' }));
+            }
+        });
+
+        // OAuth2 Token revocation endpoint
+        this.router.post('/oauth2/revoke', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/revoke`, {
+                    method: 'POST',
+                    headers: {
+                        ...req.headers,
+                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
+                    },
+                    body: req.body
+                });
+
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in revoke endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'internal_server_error' }));
+            }
+        });
+
+        // OAuth2 Token introspection endpoint
+        this.router.post('/oauth2/introspect', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/introspect`, {
+                    method: 'POST',
+                    headers: {
+                        ...req.headers,
+                        'host': `${this.config.hydra.hostname}:${this.config.hydra.admin_port}`
+                    },
+                    body: req.body
+                });
+
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in introspect endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'internal_server_error' }));
+            }
+        });
+
+        // OAuth callback handler - disabled for dynamic client registration
+        this.router.get('/callback', async (req, res) => {
+            res.status(400).json({ 
+                error: 'Generic callback disabled', 
+                message: 'Clients must use their own callback URLs registered during dynamic registration' 
+            });
+        });
+
+        // Logout endpoint
+        this.router.post('/logout', async (req, res) => {
+            try {
+                const sessionId = req.cookies['mcp-session'] || req.headers['mcp-session-id'];
+                if (sessionId) {
+                    await this.deleteSession(sessionId);
+                }
+
+                res.clearCookie('mcp-session');
+                res.json({ success: true, message: 'Logged out successfully' });
+            } catch (error) {
+                console.error('Logout error:', error);
+                res.status(500).json({ error: 'Logout failed' });
+            }
+        });
+    }
+
+    /**
+     * Setup OpenID Connect and OAuth discovery endpoints
+     */
+    setupDiscoveryEndpoints() {
+        // OpenID Connect configuration endpoint
+        this.router.get('/.well-known/openid-configuration', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in well-known endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch OpenID configuration' }));
+            }
+        });
+
+        // JWKS endpoint for token verification
+        this.router.get('/.well-known/jwks.json', async (req, res) => {
+            try {
+                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/jwks.json`);
+                const body = await response.body.text();
+                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
+                res.end(body);
+            } catch (error) {
+                console.error('Error in jwks endpoint:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch JWKS' }));
+            }
+        });
+
+        // OAuth authorization server discovery
+        this.router.get('/.well-known/oauth-authorization-server', (req, res) => {
+            const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(discoveryDoc);
+        });
+
+        // OAuth authorization server discovery with /mcp path
+        this.router.get('/.well-known/oauth-authorization-server/mcp', (req, res) => {
+            const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(discoveryDoc);
+        });
+
+        // OAuth protected resource discovery
+        this.router.get('/.well-known/oauth-protected-resource', (req, res) => {
+            const discoveryDoc = this.generateOAuthProtectedResourceDiscovery();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(discoveryDoc);
+        });
+
+        this.router.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
+            const mcpDoc = this.generateOAuthProtectedResourceMcp();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(mcpDoc);
+        });
+
+        this.router.get('/.well-known/oauth-protected-resource/mcp/*', (req, res) => {
+            const mcpDoc = this.generateOAuthProtectedResourceMcp();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(mcpDoc);
+        });
+
+        // Legacy routes for backward compatibility
+        this.router.get('/oauth-protected-resource-discovery.json', (req, res) => {
+            const discoveryDoc = this.generateOAuthProtectedResourceDiscovery();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(discoveryDoc);
+        });
+
+        this.router.get('/oauth-protected-resource-mcp.json', (req, res) => {
+            const mcpDoc = this.generateOAuthProtectedResourceMcp();
+            res.setHeader('Content-Type', 'application/json');
+            res.json(mcpDoc);
+        });
+    }
+
+    /**
+     * Setup user interface endpoints for login and consent
+     */
+    setupUIEndpoints() {
+        this.setupLoginRoutes();
+        this.setupConsentRoutes();
+    }
+
+    /**
+     * Setup API documentation endpoints
+     */
+    setupDocumentationEndpoints() {
+        // API docs route - Dynamic generation
+        this.router.get('/docs', (req, res) => {
+            const apiDocs = this.generateApiDocumentation();
+            res.setHeader('Content-Type', 'text/html');
+            res.send(apiDocs);
+        });
+
+        // Legacy route for backward compatibility
+        this.router.get('/api-docs.html', (req, res) => {
+            const apiDocs = this.generateApiDocumentation();
+            res.setHeader('Content-Type', 'text/html');
+            res.send(apiDocs);
+        });
+    }
+
+    // ================================================================
+    // OAUTH2 HANDLERS
+    // ================================================================
+
+    /**
+     * Handle OAuth2 authorization requests
+     * Validates client parameters and forwards to Hydra for processing
+     */
     handleOAuth2Auth = async (req, res) => {
         const {
             response_type,
@@ -289,14 +766,14 @@ export class UnifiedOAuthService {
             return res.end('Unsupported response_type');
         }
 
-        // Validate redirect URI
+        // Validate redirect URI against allowed domains
         const isValidRedirectUri = await this.validateRedirectUri(redirect_uri, this.config.oauth.allowed_redirect_domains);
         if (!isValidRedirectUri) {
             res.writeHead(400, { 'Content-Type': 'text/plain' });
             return res.end('Invalid redirect URI domain');
         }
 
-        // Validate scopes
+        // Validate scopes against allowed scopes
         const isValidScope = this.validateScopes(scope, this.config.oauth.allowed_scopes);
         if (!isValidScope) {
             res.writeHead(400, { 'Content-Type': 'text/plain' });
@@ -374,7 +851,10 @@ export class UnifiedOAuthService {
         }
     };
 
-    // OAuth2 Client Registration endpoint handler
+    /**
+     * Handle OAuth2 client registration requests
+     * Supports dynamic client registration with validation
+     */
     handleOAuth2Register = async (req, res) => {
         const {
             client_id,
@@ -446,14 +926,14 @@ export class UnifiedOAuthService {
                     body: JSON.stringify(clientPayload)
                 }
             );
-
+            
             const registerBody = await registerResponse.body.text();
             console.log(`[OAUTH] Registration response: ${registerResponse.statusCode} - ${registerBody}`);
 
             if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
                 console.log('Client created successfully:', generatedClientId);
                 res.writeHead(201, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({
+                return res.end(JSON.stringify({ 
                     client_id: generatedClientId,
                     client_secret: generatedClientSecret,
                     client_name: clientPayload.client_name,
@@ -472,15 +952,24 @@ export class UnifiedOAuthService {
         } catch (regError) {
             console.error('Error creating client:', regError);
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({
-                error: 'Error during client registration',
+            return res.end(JSON.stringify({ 
+                error: 'Error during client registration', 
                 details: regError.message,
                 url: `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`
             }));
         }
     };
 
-    // Get client from Hydra
+    // ================================================================
+    // HYDRA INTEGRATION UTILITIES
+    // ================================================================
+
+    /**
+     * Get client details from Hydra
+     * 
+     * @param {string} clientId - Client ID to retrieve
+     * @returns {object} Hydra response object
+     */
     async getClient(clientId) {
         try {
             const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients/${clientId}`, {
@@ -497,255 +986,15 @@ export class UnifiedOAuthService {
         }
     }
 
-    setupRoutes() {
-        // Root level APISIX compatibility redirect
-        this.router.get('/authorize', (req, res) => {
-            // Redirect /authorize to /oauth/oauth2/auth (APISIX compatibility)
-            const queryString = new URLSearchParams(req.query).toString();
-            const redirectUrl = `/oauth/oauth2/auth${queryString ? '?' + queryString : ''}`;
-            console.log(`[APISIX-COMPAT] Redirecting /authorize to ${redirectUrl}`);
-            res.redirect(redirectUrl);
-        });
-
-        // OAuth2 Authorization endpoint
-        this.router.get('/oauth2/auth', this.handleOAuth2Auth);
-
-        // OAuth2 Client Registration endpoint
-        this.router.post('/oauth/register', this.handleOAuth2Register);
-
-        // OAuth2 Issuer endpoint - OpenID Connect Discovery
-        this.router.get('/oauth', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in oauth issuer endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Failed to fetch OAuth issuer configuration' }));
-            }
-        });
-
-        // OAuth2 Token endpoint - proxy to Hydra
-        this.router.post('/oauth2/token', async (req, res) => {
-            try {
-                // Convert body to proper format for undici
-                let bodyData;
-                if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
-                    // Convert object to URL-encoded string
-                    bodyData = new URLSearchParams(req.body).toString();
-                } else {
-                    // For other content types, stringify if needed
-                    bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-                }
-
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/token`, {
-                    method: 'POST',
-                    headers: {
-                        ...req.headers,
-                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
-                    },
-                    body: bodyData
-                });
-
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in token endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'internal_server_error' }));
-            }
-        });
-
-        // OpenID Connect configuration endpoint - proxy to Hydra
-        // This handles both /oauth/.well-known/openid-configuration and /.well-known/openid-configuration
-        this.router.get('/.well-known/openid-configuration', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/openid-configuration`);
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in well-known endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Failed to fetch OpenID configuration' }));
-            }
-        });
-
-        // JWKS endpoint - proxy to Hydra
-        this.router.get('/.well-known/jwks.json', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/.well-known/jwks.json`);
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in jwks endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Failed to fetch JWKS' }));
-            }
-        });
-
-        // UserInfo endpoint - proxy to Hydra
-        this.router.get('/userinfo', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/userinfo`, {
-                    method: 'GET',
-                    headers: {
-                        ...req.headers,
-                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
-                    }
-                });
-
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in userinfo endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'internal_server_error' }));
-            }
-        });
-
-        // OAuth2 Token revocation endpoint - proxy to Hydra  
-        this.router.post('/oauth2/revoke', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/oauth2/revoke`, {
-                    method: 'POST',
-                    headers: {
-                        ...req.headers,
-                        'host': `${this.config.hydra.hostname}:${this.config.hydra.public_port}`
-                    },
-                    body: req.body
-                });
-
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in revoke endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'internal_server_error' }));
-            }
-        });
-
-        // OAuth2 Token introspection endpoint - proxy to Hydra
-        this.router.post('/oauth2/introspect', async (req, res) => {
-            try {
-                const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/oauth2/introspect`, {
-                    method: 'POST',
-                    headers: {
-                        ...req.headers,
-                        'host': `${this.config.hydra.hostname}:${this.config.hydra.admin_port}`
-                    },
-                    body: req.body
-                });
-
-                const body = await response.body.text();
-                res.writeHead(response.statusCode, { 'Content-Type': response.headers['content-type'] || 'application/json' });
-                res.end(body);
-            } catch (error) {
-                console.error('Error in introspect endpoint:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'internal_server_error' }));
-            }
-        });
-
-        // Logout endpoint
-        this.router.post('/logout', async (req, res) => {
-            try {
-                const sessionId = req.cookies['mcp-session'] || req.headers['mcp-session-id'];
-                if (sessionId) {
-                    await this.deleteSession(sessionId);
-                }
-
-                res.clearCookie('mcp-session');
-                res.json({ success: true, message: 'Logged out successfully' });
-            } catch (error) {
-                console.error('Logout error:', error);
-                res.status(500).json({ error: 'Logout failed' });
-            }
-        });
-
-        // OAuth authorization server discovery - generate document directly
-        this.router.get('/.well-known/oauth-authorization-server', (req, res) => {
-            const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(discoveryDoc);
-        });
-
-        // OAuth authorization server discovery with /mcp path
-        this.router.get('/.well-known/oauth-authorization-server/mcp', (req, res) => {
-            const discoveryDoc = this.generateOAuthAuthorizationServerDiscovery();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(discoveryDoc);
-        });
-
-        // API docs route - Dynamic generation
-        this.router.get('/docs', (req, res) => {
-            const apiDocs = this.generateApiDocumentation();
-            res.setHeader('Content-Type', 'text/html');
-            res.send(apiDocs);
-        });
-
-        // OAuth protected resource discovery - Dynamic generation
-        this.router.get('/.well-known/oauth-protected-resource', (req, res) => {
-            const discoveryDoc = this.generateOAuthProtectedResourceDiscovery();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(discoveryDoc);
-        });
-
-        this.router.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
-            const mcpDoc = this.generateOAuthProtectedResourceMcp();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(mcpDoc);
-        });
-
-        this.router.get('/.well-known/oauth-protected-resource/mcp/*', (req, res) => {
-            const mcpDoc = this.generateOAuthProtectedResourceMcp();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(mcpDoc);
-        });
-
-        // Legacy routes for backward compatibility
-        this.router.get('/oauth/oauth-protected-resource-discovery.json', (req, res) => {
-            const discoveryDoc = this.generateOAuthProtectedResourceDiscovery();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(discoveryDoc);
-        });
-
-        this.router.get('/oauth/oauth-protected-resource-mcp.json', (req, res) => {
-            const mcpDoc = this.generateOAuthProtectedResourceMcp();
-            res.setHeader('Content-Type', 'application/json');
-            res.json(mcpDoc);
-        });
-
-        // Health check endpoint
-        this.router.get('/health', (req, res) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-                status: 'healthy', 
-                timestamp: new Date().toISOString()
-            }));
-        });
-
-        // Debug endpoint - show request/response history
-        this.router.get('/debug', (req, res) => {
-            // This requires access to server's debug data, so we'll need to modify this
-            res.writeHead(501, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-                error: 'Debug endpoint temporarily moved to server.js',
-                message: 'Will be refactored'
-            }));
-        });
-
-        this.setupLoginRoutes();
-        this.setupConsentRoutes();
-    }
-
-    // Exchange authorization code for tokens
+    /**
+     * Exchange authorization code for tokens
+     * 
+     * @param {string} code - Authorization code from OAuth flow
+     * @param {string} originalRedirectUri - Original redirect URI used in authorization
+     * @param {string} clientId - Client ID for token exchange
+     * @param {string} clientSecret - Client secret for authentication
+     * @returns {object|null} Token response or null if failed
+     */
     async exchangeCodeForTokens(code, originalRedirectUri = null, clientId = null, clientSecret = null) {
         try {
             // Use original redirect_uri if provided, otherwise default to our callback
@@ -768,7 +1017,7 @@ export class UnifiedOAuthService {
             console.log(`[OIDC] Token exchange request to: ${tokenUrl}`);
             console.log(`[OIDC] Token exchange payload:`, {
                 ...tokenPayload,
-                client_secret: clientSecret
+                client_secret: '[REDACTED]'
             });
 
             // Use client_secret_post method: send client credentials in body per Hydra client registration
@@ -795,7 +1044,12 @@ export class UnifiedOAuthService {
         }
     }
 
-    // Get user info from access token
+    /**
+     * Get user info from access token
+     * 
+     * @param {string} accessToken - Access token for user info request
+     * @returns {object|null} User info or null if failed
+     */
     async getUserInfo(accessToken) {
         try {
             const response = await request(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}/userinfo`, {
@@ -817,7 +1071,16 @@ export class UnifiedOAuthService {
         }
     }
 
-    // Generate OAuth Authorization Server Discovery document dynamically
+    // ================================================================
+    // DISCOVERY DOCUMENT GENERATORS
+    // ================================================================
+
+    /**
+     * Generate OAuth Authorization Server Discovery document
+     * RFC 8414 compliant discovery document
+     * 
+     * @returns {object} Authorization server metadata
+     */
     generateOAuthAuthorizationServerDiscovery() {
         const baseUrl = this.config.hydra?.public_url || `http://localhost:${this.config.server_port || 3000}`;
 
@@ -840,7 +1103,12 @@ export class UnifiedOAuthService {
         };
     }
 
-    // Generate OAuth Protected Resource Discovery document dynamically
+    /**
+     * Generate OAuth Protected Resource Discovery document
+     * RFC 8414 compliant protected resource metadata
+     * 
+     * @returns {object} Protected resource metadata
+     */
     generateOAuthProtectedResourceDiscovery() {
         const baseUrl = this.config.hydra?.public_url || `http://localhost:${this.config.server_port || 3000}`;
 
@@ -860,7 +1128,12 @@ export class UnifiedOAuthService {
         };
     }
 
-    // Generate OAuth Protected Resource MCP document dynamically
+    /**
+     * Generate OAuth Protected Resource MCP document
+     * MCP-specific protected resource metadata
+     * 
+     * @returns {object} MCP resource metadata
+     */
     generateOAuthProtectedResourceMcp() {
         const baseUrl = this.config.hydra?.public_url || `http://localhost:${this.config.server_port || 3000}`;
 
@@ -873,7 +1146,12 @@ export class UnifiedOAuthService {
         };
     }
 
-    // Generate API documentation dynamically
+    /**
+     * Generate API documentation HTML
+     * Dynamic API documentation with current configuration
+     * 
+     * @returns {string} Rendered HTML documentation
+     */
     generateApiDocumentation() {
         const baseUrl = this.config.hydra?.public_url || `http://localhost:${this.config.server_port || 3000}`;
 
@@ -886,8 +1164,15 @@ export class UnifiedOAuthService {
         return this.renderTemplate('api-docs.html', templateVars);
     }
 
-    // Login routes setup
+    // ================================================================
+    // LOGIN FLOW HANDLERS
+    // ================================================================
+
+    /**
+     * Setup login routes for OAuth2 authentication flow
+     */
     setupLoginRoutes() {
+        // Login form display
         this.router.get('/login', async (req, res) => {
             const { login_challenge } = req.query;
 
@@ -907,6 +1192,7 @@ export class UnifiedOAuthService {
 
                 const loginInfo = await loginReq.body.json();
 
+                // Show login form
                 const loginForm = this.renderTemplate('login.html', {
                     LOGIN_CHALLENGE: login_challenge,
                     CLIENT_NAME: loginInfo.client?.client_name || loginInfo.client?.client_id || 'Unknown Client',
@@ -923,6 +1209,7 @@ export class UnifiedOAuthService {
             }
         });
 
+        // Login form submission
         this.router.post('/login', async (req, res) => {
             const { email, password, remember } = req.body;
 
@@ -935,7 +1222,7 @@ export class UnifiedOAuthService {
 
                 if (!isValidUser) {
                     const loginForm = this.renderTemplate('login.html', {
-                        LOGIN_CHALLENGE: login_challenge,
+                        LOGIN_CHALLENGE: challenge,
                         ERROR: 'Invalid email or password'
                     });
 
@@ -971,8 +1258,15 @@ export class UnifiedOAuthService {
         });
     }
 
-    // Consent routes setup
+    // ================================================================
+    // CONSENT FLOW HANDLERS
+    // ================================================================
+
+    /**
+     * Setup consent routes for OAuth2 authorization flow
+     */
     setupConsentRoutes() {
+        // Consent form display
         this.router.get('/consent', async (req, res) => {
             const { consent_challenge } = req.query;
 
@@ -992,7 +1286,7 @@ export class UnifiedOAuthService {
 
                 const consentInfo = await consentReq.body.json();
 
-                // For other clients, show consent form
+                // Show consent form
                 const requestedScopes = consentInfo.requested_scope || [];
                 const scopeList = requestedScopes.map(scope => `<li>${scope}</li>`).join('');
                 const scopeHiddenFields = requestedScopes.map(scope => 
@@ -1016,6 +1310,7 @@ export class UnifiedOAuthService {
             }
         });
 
+        // Consent form submission
         this.router.post('/consent', async (req, res) => {
             const { grant_scope, remember } = req.body;
 
@@ -1054,27 +1349,16 @@ export class UnifiedOAuthService {
         });
     }
 
-    // User validation
-    async validateUser(email, password) {
-        try {
-            if (!this.config.users || !Array.isArray(this.config.users)) {
-                return false;
-            }
+    // ================================================================
+    // AUTHENTICATION MIDDLEWARE
+    // ================================================================
 
-            const user = this.config.users.find(u => u.email === email);
-            if (!user) {
-                return false;
-            }
-
-            // Compare password with bcrypt hash
-            return await bcrypt.compare(password, user.password_hash);
-        } catch (error) {
-            console.error('User validation error:', error);
-            return false;
-        }
-    }
-
-    // Token-based authentication middleware for dynamic clients
+    /**
+     * Create token-based authentication middleware for dynamic clients
+     * Validates Bearer tokens using Hydra introspection
+     * 
+     * @returns {function} Express middleware function
+     */
     createOpenIDConnectMiddleware() {
         return async (req, res, next) => {
             try {
@@ -1159,17 +1443,25 @@ export class UnifiedOAuthService {
         };
     }
 
+    // ================================================================
+    // PUBLIC API
+    // ================================================================
+
+    /**
+     * Get the configured Express router
+     * 
+     * @returns {object} Express router instance
+     */
     getRouter() {
         return this.router;
     }
 
+    /**
+     * Get the OpenID Connect authentication middleware
+     * 
+     * @returns {function} Authentication middleware function
+     */
     getOpenIDConnectMiddleware() {
         return this.createOpenIDConnectMiddleware();
-    }
-
-    async shutdown() {
-        if (this.redisClient) {
-            await this.redisClient.quit();
-        }
     }
 }
