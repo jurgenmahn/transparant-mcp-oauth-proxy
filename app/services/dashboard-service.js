@@ -81,6 +81,17 @@ export class DashboardService {
                 res.status(500).json({ error: 'Failed to load configuration' });
             }
         });
+        
+        // Debug endpoint to see extracted fields
+        this.router.get('/api/debug', async (req, res) => {
+            try {
+                const fields = await this.extractFieldDefinitions('/home/jurgen/sites/create_all_containers/mcp-launcher/app/config/local.yaml');
+                res.json({ fields, count: fields.length });
+            } catch (error) {
+                console.error('Error in debug:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
     
     // Authentication middleware
@@ -156,42 +167,18 @@ export class DashboardService {
     async extractFieldDefinitions(filePath) {
         try {
             const content = await fs.readFile(filePath, 'utf8');
-            const lines = content.split('\n');
-            const fields = [];
             
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // Look for DASHBOARD comment blocks
-                if (line.trim() === '# DASHBOARD') {
-                    const comments = [];
-                    let j = i + 1;
-                    
-                    // Collect all comment lines until we hit a non-comment line
-                    while (j < lines.length && lines[j].trim().startsWith('#')) {
-                        comments.push(lines[j].replace(/^#\s*/, ''));
-                        j++;
-                    }
-                    
-                    // Find the actual config line (non-comment, non-empty)
-                    while (j < lines.length && (lines[j].trim() === '' || lines[j].trim().startsWith('#'))) {
-                        j++;
-                    }
-                    
-                    if (j < lines.length) {
-                        const configLine = lines[j];
-                        const yamlKey = this.extractYamlKey(configLine);
-                        
-                        if (yamlKey) {
-                            const field = this.parseCommentField(comments);
-                            field.yaml_key = yamlKey;
-                            field.yaml_path = this.getYamlPath(lines, j);
-                            field.current_value = this.extractValueFromConfigLine(configLine, lines, j);
-                            fields.push(field);
-                        }
-                    }
-                    
-                    i = j; // Skip processed lines
+            // Parse the entire file as YAML first to get the actual values
+            const yamlData = yaml.parse(content);
+            
+            // Now extract the fields using a simple approach
+            const fields = [];
+            const dashboardBlocks = this.findDashboardBlocks(content);
+            
+            for (const block of dashboardBlocks) {
+                const field = this.parseFieldFromBlock(block, yamlData);
+                if (field) {
+                    fields.push(field);
                 }
             }
             
@@ -200,6 +187,172 @@ export class DashboardService {
             console.error(`Error reading file ${filePath}:`, error);
             return [];
         }
+    }
+    
+    // Find all DASHBOARD comment blocks
+    findDashboardBlocks(content) {
+        const blocks = [];
+        const lines = content.split('\n');
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim() === '# DASHBOARD') {
+                const block = {
+                    startLine: i,
+                    comments: [],
+                    configLine: null,
+                    yamlKey: null,
+                    yamlPath: []
+                };
+                
+                // Collect comment lines
+                let j = i + 1;
+                while (j < lines.length && lines[j].trim().startsWith('#')) {
+                    const comment = lines[j].replace(/^#\s*/, '').trim();
+                    if (comment) {
+                        block.comments.push(comment);
+                    }
+                    j++;
+                }
+                
+                // Find the config line
+                while (j < lines.length && (lines[j].trim() === '' || lines[j].trim().startsWith('#'))) {
+                    j++;
+                }
+                
+                if (j < lines.length) {
+                    block.configLine = lines[j];
+                    block.yamlKey = this.extractYamlKey(lines[j]);
+                    block.yamlPath = this.buildYamlPath(lines, j);
+                    
+                    if (block.yamlKey) {
+                        blocks.push(block);
+                    }
+                }
+            }
+        }
+        
+        return blocks;
+    }
+    
+    // Parse field from a DASHBOARD block
+    parseFieldFromBlock(block, yamlData) {
+        const field = {
+            yaml_key: block.yamlKey,
+            yaml_path: block.yamlPath,
+            friendly_name: null,
+            field_type: 'textbox',
+            mandatory: false,
+            allowed_values: null,
+            validation: null,
+            length: null,
+            help: null,
+            prepend: null,
+            append: null,
+            sub_fields: []
+        };
+        
+        // Parse comments to extract field properties
+        console.log(`🔍 Field ${block.yamlKey}: Found ${block.comments.length} comments:`, block.comments);
+        for (const comment of block.comments) {
+            this.parseCommentLine(comment, field);
+        }
+        console.log(`📝 Field ${block.yamlKey}: friendly_name=${field.friendly_name}, field_type=${field.field_type}`);
+        
+        // Get the current value from parsed YAML
+        field.current_value = this.getValueFromYamlPath(yamlData, field.yaml_path, field.yaml_key);
+        
+        return field;
+    }
+    
+    // Parse a single comment line and update field properties
+    parseCommentLine(comment, field) {
+        // Remove any remaining # prefixes
+        let trimmed = comment.trim();
+        if (trimmed.startsWith('#')) {
+            trimmed = trimmed.substring(1).trim();
+        }
+        
+        if (trimmed.startsWith('friendly_name:')) {
+            field.friendly_name = trimmed.substring('friendly_name:'.length).trim();
+        } else if (trimmed.startsWith('field_type:')) {
+            field.field_type = trimmed.substring('field_type:'.length).trim();
+        } else if (trimmed.startsWith('mandatory:')) {
+            field.mandatory = trimmed.substring('mandatory:'.length).trim() === 'true';
+        } else if (trimmed.startsWith('allowed_values:')) {
+            const values = trimmed.substring('allowed_values:'.length).trim();
+            if (values !== 'null') {
+                field.allowed_values = values.split(',').map(v => v.trim());
+            }
+        } else if (trimmed.startsWith('validation:')) {
+            const validation = trimmed.substring('validation:'.length).trim();
+            if (validation !== 'null') {
+                field.validation = validation;
+            }
+        } else if (trimmed.startsWith('length:')) {
+            field.length = parseInt(trimmed.substring('length:'.length).trim());
+        } else if (trimmed.startsWith('help:')) {
+            field.help = trimmed.substring('help:'.length).trim();
+        } else if (trimmed.startsWith('prepend:')) {
+            field.prepend = trimmed.substring('prepend:'.length).trim();
+        } else if (trimmed.startsWith('append:')) {
+            field.append = trimmed.substring('append:'.length).trim();
+        } else if (trimmed.match(/^friendly_name\[(\d+)\]:/)) {
+            const match = trimmed.match(/^friendly_name\[(\d+)\]:/);
+            const index = parseInt(match[1]);
+            if (!field.sub_fields[index]) field.sub_fields[index] = {};
+            field.sub_fields[index].friendly_name = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+        } else if (trimmed.match(/^validation\[(\d+)\]:/)) {
+            const match = trimmed.match(/^validation\[(\d+)\]:/);
+            const index = parseInt(match[1]);
+            if (!field.sub_fields[index]) field.sub_fields[index] = {};
+            const validation = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+            field.sub_fields[index].validation = validation === 'null' ? null : validation;
+        } else if (trimmed.match(/^mandatory\[(\d+)\]:/)) {
+            const match = trimmed.match(/^mandatory\[(\d+)\]:/);
+            const index = parseInt(match[1]);
+            if (!field.sub_fields[index]) field.sub_fields[index] = {};
+            field.sub_fields[index].mandatory = trimmed.substring(trimmed.indexOf(':') + 1).trim() === 'true';
+        }
+    }
+    
+    // Build YAML path for a line
+    buildYamlPath(lines, lineIndex) {
+        const path = [];
+        const currentIndent = lines[lineIndex].search(/\S/);
+        
+        for (let i = lineIndex - 1; i >= 0; i--) {
+            const line = lines[i];
+            if (line.trim() === '' || line.trim().startsWith('#')) continue;
+            
+            const indent = line.search(/\S/);
+            if (indent < currentIndent) {
+                const match = line.match(/^\s*([^:]+):/);
+                if (match) {
+                    path.unshift(match[1].trim());
+                }
+            }
+        }
+        
+        return path;
+    }
+    
+    // Get value from YAML data using path
+    getValueFromYamlPath(yamlData, path, key) {
+        let current = yamlData;
+        
+        for (const segment of path) {
+            if (current && typeof current === 'object' && segment in current) {
+                current = current[segment];
+            } else {
+                return null;
+            }
+        }
+        
+        if (current && typeof current === 'object' && key in current) {
+            return current[key];
+        }
+        
+        return null;
     }
     
     // Extract YAML key from config line
@@ -237,55 +390,52 @@ export class DashboardService {
         
         // If line ends with just the key (array or object follows)
         if (value === '' || value === '|') {
-            return this.extractComplexValue(lines, lineIndex + 1, line.search(/\S/));
+            // Parse the YAML value using actual YAML parser
+            return this.parseYamlSection(lines, lineIndex);
         }
         
         return value;
     }
     
-    // Extract complex values (arrays, objects, multiline)
-    extractComplexValue(lines, startIndex, parentIndent) {
-        const values = [];
-        let i = startIndex;
-        
-        while (i < lines.length) {
-            const line = lines[i];
-            if (line.trim() === '' || line.trim().startsWith('#')) {
+    // Parse YAML section using proper YAML parser
+    parseYamlSection(lines, lineIndex) {
+        try {
+            // Get the key name from the current line
+            const keyLine = lines[lineIndex];
+            const keyMatch = keyLine.match(/^\s*([^:]+):/);
+            if (!keyMatch) return null;
+            
+            const keyName = keyMatch[1].trim();
+            const keyIndent = keyLine.search(/\S/);
+            
+            // Collect all lines that belong to this key
+            const sectionLines = [keyLine];
+            let i = lineIndex + 1;
+            
+            while (i < lines.length) {
+                const line = lines[i];
+                if (line.trim() === '' || line.trim().startsWith('#')) {
+                    sectionLines.push(line);
+                    i++;
+                    continue;
+                }
+                
+                const indent = line.search(/\S/);
+                if (indent <= keyIndent) break;
+                
+                sectionLines.push(line);
                 i++;
-                continue;
             }
             
-            const indent = line.search(/\S/);
-            if (indent <= parentIndent) break;
+            // Parse the section as YAML
+            const yamlText = sectionLines.join('\n');
+            const parsed = yaml.parse(yamlText);
             
-            if (line.trim().startsWith('-')) {
-                // Array item
-                const item = line.replace(/^\s*-\s*/, '').trim();
-                if (item) {
-                    values.push(item);
-                } else {
-                    // Complex array item
-                    const complexItem = this.extractComplexValue(lines, i + 1, indent);
-                    values.push(complexItem);
-                }
-            } else if (line.includes(':')) {
-                // Object property
-                const key = line.split(':')[0].trim();
-                const value = line.split(':').slice(1).join(':').trim();
-                if (value) {
-                    values[key] = value;
-                } else {
-                    values[key] = this.extractComplexValue(lines, i + 1, indent);
-                }
-            } else {
-                // Multiline content
-                values.push(line.trim());
-            }
-            
-            i++;
+            return parsed[keyName];
+        } catch (error) {
+            console.error('Error parsing YAML section:', error);
+            return null;
         }
-        
-        return values;
     }
     
     // Load current values directly from config files
@@ -299,8 +449,9 @@ export class DashboardService {
                 const fields = await this.extractFieldDefinitions(filePath);
                 
                 for (const field of fields) {
-                    const fieldKey = field.yaml_path ? `${field.yaml_path}.${field.yaml_key}` : field.yaml_key;
-                    const uniqueKey = `${file.name}::${fieldKey}`;
+                    // Use friendly_name for identification if available, otherwise use yaml_key
+                    const fieldIdentifier = field.friendly_name || field.yaml_key;
+                    const uniqueKey = `${file.name}::${fieldIdentifier}`;
                     
                     values[uniqueKey] = {
                         file: file.name,
@@ -336,7 +487,7 @@ export class DashboardService {
         const fieldCounts = {};
         Object.values(values).forEach(data => {
             const friendlyName = data.field.friendly_name;
-            if (friendlyName) {
+            if (friendlyName && friendlyName.trim() !== '') {
                 fieldCounts[friendlyName] = (fieldCounts[friendlyName] || 0) + 1;
             }
         });
@@ -399,7 +550,10 @@ export class DashboardService {
         
         fieldHtml += '</label>';
         
-        if (field.allowed_values && field.allowed_values.length > 0) {
+        // Handle different field types
+        if (field.field_type && field.field_type.startsWith('array')) {
+            fieldHtml += this.generateArrayField(fieldKey, field, currentValue);
+        } else if (field.allowed_values && field.allowed_values.length > 0) {
             // Dropdown for allowed values
             fieldHtml += `<select name="${fieldKey}" id="${fieldKey}"`;
             if (field.mandatory) fieldHtml += ' required';
@@ -409,24 +563,18 @@ export class DashboardService {
                 fieldHtml += '<option value="">-- Select --</option>';
             }
             
+            const displayValue = this.getDisplayValue(currentValue, field);
             field.allowed_values.forEach(option => {
-                const selected = currentValue === option ? 'selected' : '';
+                const selected = displayValue === option ? 'selected' : '';
                 fieldHtml += `<option value="${option}" ${selected}>${option}</option>`;
             });
             fieldHtml += '</select>';
         } else {
             switch (field.field_type) {
-                case 'textbox':
-                    const value = currentValue || '';
-                    fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${value}"`;
-                    if (field.validation) fieldHtml += ` pattern="${field.validation}"`;
-                    if (field.mandatory) fieldHtml += ' required';
-                    fieldHtml += '>';
-                    break;
-                    
                 case 'dropdown':
-                    // This should have allowed_values, but fallback to textbox
-                    fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${currentValue || ''}"`;
+                    // Dropdown should have allowed_values, fallback to textbox
+                    fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${this.getDisplayValue(currentValue, field)}"`;
+                    if (field.validation) fieldHtml += ` pattern="${field.validation}"`;
                     if (field.mandatory) fieldHtml += ' required';
                     fieldHtml += '>';
                     break;
@@ -450,14 +598,13 @@ export class DashboardService {
                     fieldHtml += `>${currentValue || ''}</textarea>`;
                     break;
                     
+                case 'textbox':
                 default:
-                    if (field.field_type && field.field_type.startsWith('array[')) {
-                        fieldHtml += this.generateArrayField(fieldKey, field, currentValue);
-                    } else {
-                        fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${currentValue || ''}"`;
-                        if (field.mandatory) fieldHtml += ' required';
-                        fieldHtml += '>';
-                    }
+                    fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${this.getDisplayValue(currentValue, field)}"`;
+                    if (field.validation) fieldHtml += ` pattern="${field.validation}"`;
+                    if (field.mandatory) fieldHtml += ' required';
+                    fieldHtml += '>';
+                    break;
             }
         }
         
@@ -465,23 +612,68 @@ export class DashboardService {
         return fieldHtml;
     }
     
+    // Get display value (removing prepend/append for UI)
+    getDisplayValue(currentValue, field) {
+        if (!currentValue) return '';
+        
+        let value = currentValue.toString();
+        
+        // Remove prepend if it exists
+        if (field.prepend && value.startsWith(field.prepend)) {
+            value = value.substring(field.prepend.length);
+        }
+        
+        // Remove append if it exists
+        if (field.append && value.endsWith(field.append)) {
+            value = value.substring(0, value.length - field.append.length);
+        }
+        
+        return value;
+    }
+    
     // Generate HTML for array fields
     generateArrayField(fieldKey, field, currentValue) {
         const arrayType = field.field_type.match(/array\[(.+)\]/)[1];
-        const subTypes = arrayType.split(',').map(type => {
-            const parts = type.split(':');
-            return { type: parts[0], name: parts[1] || parts[0] };
-        });
         
+        if (arrayType.includes(':')) {
+            // Complex array with subtypes (e.g., array[textbox:name,textbox:startup_command])
+            return this.generateComplexArrayField(fieldKey, field, currentValue, arrayType);
+        } else {
+            // Simple array (e.g., array[textbox])
+            return this.generateSimpleArrayField(fieldKey, field, currentValue, arrayType);
+        }
+    }
+    
+    // Generate simple array field (just one type)
+    generateSimpleArrayField(fieldKey, field, currentValue, arrayType) {
         let html = `<div class="array-field" id="${fieldKey}_container">`;
         
-        if (Array.isArray(currentValue) && currentValue.length > 0) {
-            currentValue.forEach((item, index) => {
-                html += this.generateArrayItem(fieldKey, subTypes, item, index, field);
-            });
-        } else {
-            html += this.generateArrayItem(fieldKey, subTypes, {}, 0, field);
+        const values = Array.isArray(currentValue) ? currentValue : [];
+        
+        if (values.length === 0) {
+            // Add at least one empty field
+            values.push('');
         }
+        
+        values.forEach((value, index) => {
+            html += `<div class="array-item" data-index="${index}">`;
+            
+            switch (arrayType) {
+                case 'textbox':
+                    html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" placeholder="Enter value">`;
+                    break;
+                case 'multiline':
+                    html += `<textarea name="${fieldKey}[${index}]" rows="3" placeholder="Enter value">${value || ''}</textarea>`;
+                    break;
+                default:
+                    html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" placeholder="Enter value">`;
+            }
+            
+            if (index > 0 || values.length > 1) {
+                html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
+            }
+            html += `</div>`;
+        });
         
         html += `</div>`;
         html += `<button type="button" class="add-array-item" onclick="addArrayItem('${fieldKey}')">Add Item</button>`;
@@ -489,22 +681,56 @@ export class DashboardService {
         return html;
     }
     
-    // Generate HTML for individual array item
-    generateArrayItem(fieldKey, subTypes, item, index, field) {
+    // Generate complex array field (multiple subtypes)
+    generateComplexArrayField(fieldKey, field, currentValue, arrayType) {
+        const subTypes = arrayType.split(',').map(type => {
+            const parts = type.split(':');
+            return { type: parts[0], name: parts[1] || parts[0] };
+        });
+        
+        let html = `<div class="array-field" id="${fieldKey}_container">`;
+        
+        const values = Array.isArray(currentValue) ? currentValue : [];
+        
+        if (values.length === 0) {
+            // Add at least one empty item
+            values.push({});
+        }
+        
+        values.forEach((item, index) => {
+            html += this.generateComplexArrayItem(fieldKey, subTypes, item, index, field);
+        });
+        
+        html += `</div>`;
+        html += `<button type="button" class="add-array-item" onclick="addArrayItem('${fieldKey}')">Add Item</button>`;
+        
+        return html;
+    }
+    
+    // Generate HTML for individual complex array item
+    generateComplexArrayItem(fieldKey, subTypes, item, index, field) {
         let html = `<div class="array-item" data-index="${index}">`;
         
         subTypes.forEach((subType, subIndex) => {
             const subFieldKey = `${fieldKey}[${index}][${subType.name}]`;
             const subFieldName = field.sub_fields && field.sub_fields[subIndex] ? 
                 field.sub_fields[subIndex].friendly_name : subType.name;
-            const subValue = typeof item === 'object' ? item[subType.name] : (subIndex === 0 ? item : '');
+            
+            // Extract the actual value (not "name: value" but just "value")
+            let subValue = '';
+            if (typeof item === 'object' && item !== null) {
+                subValue = item[subType.name] || '';
+            } else if (subIndex === 0 && typeof item === 'string') {
+                // For first field, if item is a string, use it directly
+                subValue = item;
+            }
             
             html += `<div class="sub-field">`;
             html += `<label>${subFieldName}</label>`;
             
             switch (subType.type) {
                 case 'textbox':
-                    html += `<input type="text" name="${subFieldKey}" value="${subValue || ''}"`;
+                    html += `<input type="text" name="${subFieldKey}" value="${subValue}"`;
                     if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].validation) {
                         html += ` pattern="${field.sub_fields[subIndex].validation}"`;
                     }
@@ -523,17 +749,19 @@ export class DashboardService {
                     break;
                     
                 case 'multiline':
-                    html += `<textarea name="${subFieldKey}" rows="3">${subValue || ''}</textarea>`;
+                    html += `<textarea name="${subFieldKey}" rows="3">${subValue}</textarea>`;
                     break;
                     
                 default:
-                    html += `<input type="text" name="${subFieldKey}" value="${subValue || ''}">`;
+                    html += `<input type="text" name="${subFieldKey}" value="${subValue}">`;
             }
             
             html += `</div>`;
         });
         
-        html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
+        if (index > 0) {
+            html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
+        }
         html += `</div>`;
         
         return html;
@@ -674,35 +902,29 @@ export class DashboardService {
         if (!value) return [];
         
         const arrayType = field.field_type.match(/array\[(.+)\]/)[1];
-        const subTypes = arrayType.split(',').map(type => {
-            const parts = type.split(':');
-            return { type: parts[0], name: parts[1] || parts[0] };
-        });
-        
         const result = [];
         
-        // Group form data by array index
-        const itemsByIndex = {};
-        Object.entries(value).forEach(([key, val]) => {
-            const match = key.match(/\[(\d+)\]\[(.+)\]$/);
-            if (match) {
-                const index = parseInt(match[1]);
-                const subField = match[2];
-                if (!itemsByIndex[index]) itemsByIndex[index] = {};
-                itemsByIndex[index][subField] = val;
-            }
-        });
-        
-        // Process each array item
-        Object.values(itemsByIndex).forEach(item => {
-            if (subTypes.length === 1) {
-                // Simple array
-                const val = item[subTypes[0].name];
-                if (val && val.trim() !== '') {
-                    result.push(val.trim());
+        if (arrayType.includes(':')) {
+            // Complex array with subtypes
+            const subTypes = arrayType.split(',').map(type => {
+                const parts = type.split(':');
+                return { type: parts[0], name: parts[1] || parts[0] };
+            });
+            
+            // Group form data by array index
+            const itemsByIndex = {};
+            Object.entries(value).forEach(([key, val]) => {
+                const match = key.match(/\[(\d+)\]\[(.+)\]$/);
+                if (match) {
+                    const index = parseInt(match[1]);
+                    const subField = match[2];
+                    if (!itemsByIndex[index]) itemsByIndex[index] = {};
+                    itemsByIndex[index][subField] = val;
                 }
-            } else {
-                // Complex array (object)
+            });
+            
+            // Process each complex array item
+            Object.values(itemsByIndex).forEach(item => {
                 const obj = {};
                 subTypes.forEach(subType => {
                     const val = item[subType.name];
@@ -713,8 +935,16 @@ export class DashboardService {
                 if (Object.keys(obj).length > 0) {
                     result.push(obj);
                 }
-            }
-        });
+            });
+        } else {
+            // Simple array
+            Object.entries(value).forEach(([key, val]) => {
+                const match = key.match(/\[(\d+)\]$/);
+                if (match && val && val.trim() !== '') {
+                    result.push(val.trim());
+                }
+            });
+        }
         
         return result;
     }

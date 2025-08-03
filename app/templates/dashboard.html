@@ -139,20 +139,20 @@
                 
                 // Update input names and clear values
                 newItem.querySelectorAll('input, textarea').forEach(input => {
-                    const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
-                    input.name = name;
+                    // Handle both simple arrays [index] and complex arrays [index][field]
+                    if (input.name.includes('][')) {
+                        // Complex array: fieldName[0][subfield] -> fieldName[newIndex][subfield]
+                        const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                        input.name = name;
+                    } else {
+                        // Simple array: fieldName[0] -> fieldName[newIndex]
+                        const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                        input.name = name;
+                    }
                     input.value = '';
                 });
                 
                 container.appendChild(newItem);
-            } else {
-                // Simple array fallback
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.name = fieldName + '[]';
-                input.className = 'array-input';
-                input.placeholder = 'Enter value';
-                container.appendChild(input);
             }
         }
         

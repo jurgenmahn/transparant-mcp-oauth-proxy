@@ -3,19 +3,11 @@ dashboard:
     - email: admin@email.com
       password_hash: $2a$12$4J2cjLZmDYJKS9dr9PZqAuifkpDNZVOsWTdkbM8SNy9QNxqhoF/5O
       # password_hash: mcp-admin
-  configs:
-    source-base-path: /app/config/managed-configs/
-    destination-base-path: /
+  configs:    
     files:
       - type: yaml
-        name: mcp launcher
-        location: /app/config/local.yaml
-      - type: yaml
-        name: Apisix configuration
-        location: /usr/local/apisix/conf/config.yaml
-      - type: yaml
-        name: Apisix route and openid-connect configuration
-        location: /usr/local/apisix/conf/base-config.yaml     
+        name: nodejs server
+        location: /node-apps/config/local.yaml
       - type: yaml
         name: Hydra configuration
         location: /etc/hydra/config.yaml
