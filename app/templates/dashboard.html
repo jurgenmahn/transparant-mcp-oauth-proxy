@@ -15,6 +15,7 @@
         textarea { height: 100px; }
         .array-input { margin-bottom: 5px; }
         .add-array-item { background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        .remove-array-item { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-left: 10px; }
         .submit-btn { background: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
         .submit-btn:hover { background: #218838; }
         .general-section { background: #e8f4f8; }
@@ -22,6 +23,15 @@
         .auth-form input { margin-bottom: 10px; }
         .error { color: red; margin: 10px 0; }
         .success { color: green; margin: 10px 0; }
+        .required { color: red; }
+        .help-icon { cursor: help; margin-left: 5px; }
+        .array-field { border: 1px solid #eee; padding: 10px; margin-bottom: 10px; }
+        .array-item { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; background: #f9f9f9; }
+        .sub-field { margin-bottom: 10px; }
+        .sub-field label { font-weight: normal; color: #666; }
+        .hash-field { display: flex; gap: 10px; }
+        .hash-field input { flex: 1; }
+        .hash-field button { background: #6c757d; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -118,12 +128,60 @@
         // Add array item function
         function addArrayItem(fieldName) {
             const container = document.getElementById(fieldName + '_container');
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.name = fieldName + '[]';
-            input.className = 'array-input';
-            input.placeholder = 'Enter value';
-            container.appendChild(input);
+            const existingItems = container.querySelectorAll('.array-item');
+            const newIndex = existingItems.length;
+            
+            // Get the first item as template
+            const firstItem = container.querySelector('.array-item');
+            if (firstItem) {
+                const newItem = firstItem.cloneNode(true);
+                newItem.setAttribute('data-index', newIndex);
+                
+                // Update input names and clear values
+                newItem.querySelectorAll('input, textarea').forEach(input => {
+                    const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                    input.name = name;
+                    input.value = '';
+                });
+                
+                container.appendChild(newItem);
+            } else {
+                // Simple array fallback
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.name = fieldName + '[]';
+                input.className = 'array-input';
+                input.placeholder = 'Enter value';
+                container.appendChild(input);
+            }
+        }
+        
+        // Remove array item function
+        function removeArrayItem(button) {
+            const item = button.closest('.array-item');
+            if (item) {
+                item.remove();
+            }
+        }
+        
+        // Generate hash function
+        async function generateHash(fieldId, length) {
+            try {
+                const response = await fetch('/dashboard/api/generate-hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ length })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById(fieldId).value = data.hash;
+                } else {
+                    alert('Failed to generate hash');
+                }
+            } catch (error) {
+                alert('Connection error');
+            }
         }
         
         // Initialize
