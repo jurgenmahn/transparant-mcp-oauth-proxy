@@ -398,7 +398,8 @@ class MCPServer {
         });
 
         this.app.use(express.static('public'));
-        this.app.use('/static', express.static('templates'));
+        this.app.use('/static', express.static('static'));
+        this.app.use('/templates', express.static('templates'));
     }
 
     async initializeServices() {

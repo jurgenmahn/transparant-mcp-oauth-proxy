@@ -1,0 +1,168 @@
+server:
+  # DASHBOARD
+  # friendly_name: Server log level
+  # mandatory: true
+  # allowed_values: info, debug
+  # field_type: dropdown
+  # validation: null
+  log_level: info 
+
+hydra:
+  hostname: 127.0.0.1
+  public_port: 4444
+  admin_port: 4445
+  # DASHBOARD
+  # friendly_name: Server public domain name
+  # mandatory: true
+  # allowed_values: null
+  # field_type: textbox
+  # validation: ^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$
+  # prepend: https://
+  public_url: https://mcp.mahn.it
+  admin_url: http://127.0.0.1:4445/admin
+
+oauth:
+  # DASHBOARD
+  # friendly_name: Session secret
+  # mandatory: true
+  # allowed_values: null
+  # field_type: hash
+  # validation: ^[a-z0-9]{44}$
+  # length: 44
+  session_secret: Nd0bQ64G5RX7NQZwp5e9TIT/ihKcT3ymg0hPIbdYwKI=
+  # DASHBOARD
+  # friendly_name: Oauth allowed redirect domains
+  # help: Can be used to limit the allowed clients which can register automatically to the server
+  # mandatory: true
+  # allowed_values: null
+  # field_type: array[textbox]
+  # friendly_name[0]: Domainname without protocol.
+  # validation[0]: ^[a-z0-9\.\-]{2,150}\.[a-z0-9\.\-]{2,50}$
+  allowed_redirect_domains:
+    - claude.ai
+    - anthropic.com
+    - openai.com
+    - chatgpt.com
+    - mahn.it
+    - localhost
+  allowed_scopes:
+    - openid
+    - profile 
+    - mcp:read
+
+cors:
+  # DASHBOARD
+  # friendly_name: If you encounter cors error for a domain, you can add it here.
+  # mandatory: false
+  # allowed_values: null
+  # field_type: array[textbox]
+  # friendly_name[0]: Domainname with protocol.
+  # validation[0]: ^https?:\/\/(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:\/.*)?$
+  allowed_origins:
+    - https://mcp.mahn.it
+    - https://claude.ai
+    - https://anthropic.com
+    - https://openai.com
+    - https://chat.openai.com
+    - https://chatgpt.com
+    - http://localhost
+
+# DASHBOARD
+# friendly_name: Server listen port (standard 3000)
+# mandatory: true
+# allowed_values: null
+# field_type: textbox
+# validation: ^[1-9]{1}[0-9]{0,4}$
+server_port: 3000
+
+redis:
+  host: localhost
+  port: 6379
+
+# DASHBOARD
+# friendly_name: MCP services to run and expose
+# mandatory: true
+# allowed_values: null
+# field_type: array[textbox:name,textbox:startup_command,array[textbox]:options,multiline:install]
+# friendly_name[0]: Name of the MCP service, this name is just for your reference
+# validation[0]: ^[a-z\s_\-0-9]{1,100}$
+# mandatory[0]: true
+# friendly_name[1]: Command to start the MCP service e.g.: npx -y @modelcontextprotocol/server-memory
+# validation[1]: ^.{1,250}$
+# mandatory[1]: true
+# friendly_name[2]: Extra arguments to start the MCP service e.g.: --debug or --max-memory 10MB 
+# validation[2]: ^.{1,75}$
+# mandatory[2]: false
+# friendly_name[3]: If your MCP service has special requirements you can add them here in "sh shell" format.
+# mandatory[3]: false
+mcp_services:
+  - name: memory
+    startup_command: npx -y @modelcontextprotocol/server-memory
+    install: |
+      sh -c "
+      "
+
+  - name: filesystem
+    startup_command: npx -y @modelcontextprotocol/server-filesystem
+    options:
+    - /tmp
+    install: |
+      sh -c "
+      "
+
+  - name: git
+    startup_command: npx -y @cyanheads/git-mcp-server
+    install: |
+      sh -c "
+      "
+
+  - name: fetch
+    startup_command: npx -y @tokenizin/mcp-npx-fetch
+    install: |
+      sh -c "
+      "
+
+  - name: playwright
+    # startup_command: xvfb-run -s "-screen 0 1920x1080x24" npx @executeautomation/playwright-mcp-server
+    #startup_command: npx @playwright/mcp@latest --viewport-size "1920, 1080"   --browser  "chrome, firefox, webkit, msedge" --caps  "vision,pdf" --headless --device "iPhone 15" --isolated
+    startup_command: npx @playwright/mcp@latest
+    options: 
+      - --viewport-size 
+      - "1920,1080" 
+      - --browser  
+      - "chrome" 
+      - --executable-path 
+      - "/usr/bin/google-chrome" 
+      - --caps 
+      - "vision,pdf" 
+      - --headless 
+      - --isolated
+      - --no-sandbox 
+    install: |
+      sh -c "
+      "
+
+  - name: dbhub
+    startup_command: npx @bytebase/dbhub
+    options:
+      - --transport
+      - stdio
+      - --dsn
+      - mysql://root:Qr1d8woy@192.168.113.2:3306/asp?sslmode=disable
+    install: |
+      sh -c "
+      "
+# DASHBOARD
+# friendly_name: MCP users which are allowed to use the server
+# mandatory: true
+# allowed_values: null
+# field_type: array[textbox:name,password:password_hash]
+# friendly_name[0]: username or emailaddress
+# validation[0]: ^.{1,100}$
+# mandatory[0]: true
+# friendly_name[1]: User password
+# validation[1]: ^.{1,100}$
+# mandatory[1]: true
+users:
+  - email: jurgen@mahn.it
+    password_hash: $2b$10$RZYkFY3jNkCK9s89QWbuCe9mTC8GZi8vgTE9Il/24ZYko1jZqL0aq

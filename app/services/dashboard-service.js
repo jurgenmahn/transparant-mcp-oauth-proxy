@@ -4,14 +4,30 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
+import session from 'express-session';
 
 export class DashboardService {
     constructor(appPath) {
         this.appPath = appPath;
         this.router = express.Router();
         this.config = {};
+        this.setupSession();
         this.setupRoutes();
         this.setupHashGenerationRoute();
+        this.setupUserRoutes();
+    }
+    
+    setupSession() {
+        this.router.use(session({
+            secret: process.env.SESSION_SECRET || 'mcp-dashboard-secret-change-in-production',
+            resave: false,
+            saveUninitialized: false,
+            cookie: {
+                secure: false, // Set to true if using HTTPS
+                httpOnly: true,
+                maxAge: 24 * 60 * 60 * 1000 // 24 hours
+            }
+        }));
     }
     
     async initialize() {
@@ -47,24 +63,55 @@ export class DashboardService {
             }
         });
         
+        // Authentication status check
+        this.router.get('/api/auth-status', (req, res) => {
+            if (req.session && req.session.authenticated) {
+                res.json({ 
+                    authenticated: true, 
+                    email: req.session.userEmail 
+                });
+            } else {
+                res.json({ authenticated: false });
+            }
+        });
+        
+        // Logout endpoint
+        this.router.post('/logout', (req, res) => {
+            req.session.destroy((err) => {
+                if (err) {
+                    console.error('Session destruction error:', err);
+                    return res.status(500).json({ error: 'Failed to logout' });
+                }
+                res.json({ success: true });
+            });
+        });
+        
         // Login endpoint
         this.router.post('/login', async (req, res) => {
             try {
-                await this.authenticate(req, res, () => {
-                    res.json({ success: true, message: 'Authentication successful' });
-                });
+                const { email, password } = req.body;
+                
+                if (!email || !password) {
+                    return res.status(400).json({ error: 'Email and password required' });
+                }
+                
+                const user = await this.authenticateUser(email, password);
+                
+                // Create session
+                req.session.authenticated = true;
+                req.session.userEmail = user.email;
+                
+                res.json({ success: true, message: 'Authentication successful' });
             } catch (error) {
-                res.status(401).json({ success: false, error: error.message });
+                res.status(401).json({ error: error.message });
             }
         });
         
         // Save configuration
-        this.router.post('/save-config', async (req, res) => {
+        this.router.post('/save-config', this.requireAuth.bind(this), async (req, res) => {
             try {
-                await this.authenticate(req, res, async () => {
-                    await this.saveConfiguration(req.body);
-                    res.json({ success: true, message: 'Configuration saved successfully' });
-                });
+                await this.saveConfiguration(req.body);
+                res.json({ success: true, message: 'Configuration saved successfully' });
             } catch (error) {
                 console.error('Error saving configuration:', error);
                 res.status(500).json({ success: false, error: 'Failed to save configuration' });
@@ -72,7 +119,7 @@ export class DashboardService {
         });
         
         // Get current configuration (API endpoint)
-        this.router.get('/api/config', async (req, res) => {
+        this.router.get('/api/config', this.requireAuth.bind(this), async (req, res) => {
             try {
                 const values = await this.loadCurrentValues();
                 res.json(values);
@@ -83,7 +130,7 @@ export class DashboardService {
         });
         
         // Debug endpoint to see extracted fields
-        this.router.get('/api/debug', async (req, res) => {
+        this.router.get('/api/debug', this.requireAuth.bind(this), async (req, res) => {
             try {
                 const fields = await this.extractFieldDefinitions('/home/jurgen/sites/create_all_containers/mcp-launcher/app/config/local.yaml');
                 res.json({ fields, count: fields.length });
@@ -95,13 +142,15 @@ export class DashboardService {
     }
     
     // Authentication middleware
-    async authenticate(req, res, next) {
-        const { email, password } = req.body;
-        
-        if (!email || !password) {
-            throw new Error('Email and password required');
+    requireAuth(req, res, next) {
+        if (req.session && req.session.authenticated) {
+            return next();
         }
-        
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    // Authenticate user and create session
+    async authenticateUser(email, password) {
         const user = this.config.dashboard.users.find(u => u.email === email);
         if (!user) {
             throw new Error('Invalid credentials');
@@ -112,7 +161,7 @@ export class DashboardService {
             throw new Error('Invalid credentials');
         }
         
-        await next();
+        return user;
     }
     
     // Parse comment-based field definitions
@@ -204,11 +253,11 @@ export class DashboardService {
                     yamlPath: []
                 };
                 
-                // Collect comment lines
+                // Collect comment lines - keep the original comment with # removed
                 let j = i + 1;
                 while (j < lines.length && lines[j].trim().startsWith('#')) {
-                    const comment = lines[j].replace(/^#\s*/, '').trim();
-                    if (comment) {
+                    const comment = lines[j].trim();
+                    if (comment && comment !== '#') {
                         block.comments.push(comment);
                     }
                     j++;
@@ -266,7 +315,7 @@ export class DashboardService {
     
     // Parse a single comment line and update field properties
     parseCommentLine(comment, field) {
-        // Remove any remaining # prefixes
+        // Remove # prefix and clean up
         let trimmed = comment.trim();
         if (trimmed.startsWith('#')) {
             trimmed = trimmed.substring(1).trim();
@@ -280,12 +329,12 @@ export class DashboardService {
             field.mandatory = trimmed.substring('mandatory:'.length).trim() === 'true';
         } else if (trimmed.startsWith('allowed_values:')) {
             const values = trimmed.substring('allowed_values:'.length).trim();
-            if (values !== 'null') {
+            if (values !== 'null' && values !== '') {
                 field.allowed_values = values.split(',').map(v => v.trim());
             }
         } else if (trimmed.startsWith('validation:')) {
             const validation = trimmed.substring('validation:'.length).trim();
-            if (validation !== 'null') {
+            if (validation !== 'null' && validation !== '') {
                 field.validation = validation;
             }
         } else if (trimmed.startsWith('length:')) {
@@ -319,16 +368,21 @@ export class DashboardService {
     buildYamlPath(lines, lineIndex) {
         const path = [];
         const currentIndent = lines[lineIndex].search(/\S/);
+        let targetIndent = currentIndent;
         
+        // Walk backwards to build the path properly
         for (let i = lineIndex - 1; i >= 0; i--) {
             const line = lines[i];
             if (line.trim() === '' || line.trim().startsWith('#')) continue;
             
             const indent = line.search(/\S/);
-            if (indent < currentIndent) {
+            
+            // Only consider lines that are actual parent levels
+            if (indent < targetIndent) {
                 const match = line.match(/^\s*([^:]+):/);
                 if (match) {
                     path.unshift(match[1].trim());
+                    targetIndent = indent; // Update target to find the next parent level
                 }
             }
         }
@@ -662,6 +716,12 @@ export class DashboardService {
                 case 'textbox':
                     html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" placeholder="Enter value">`;
                     break;
+                case 'hash':
+                    html += `<div class="hash-field">`;
+                    html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" readonly>`;
+                    html += `<button type="button" onclick="generateHash('${fieldKey}[${index}]', 32)">Generate</button>`;
+                    html += `</div>`;
+                    break;
                 case 'multiline':
                     html += `<textarea name="${fieldKey}[${index}]" rows="3" placeholder="Enter value">${value || ''}</textarea>`;
                     break;
@@ -669,9 +729,7 @@ export class DashboardService {
                     html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" placeholder="Enter value">`;
             }
             
-            if (index > 0 || values.length > 1) {
-                html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
-            }
+            html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
             html += `</div>`;
         });
         
@@ -719,7 +777,12 @@ export class DashboardService {
             // Extract the actual value (not "name: value" but just "value")
             let subValue = '';
             if (typeof item === 'object' && item !== null) {
-                subValue = item[subType.name] || '';
+                // Handle field mapping for users (config uses 'email' but field expects 'name')
+                if (subType.name === 'name' && item.email) {
+                    subValue = item.email;
+                } else {
+                    subValue = item[subType.name] || '';
+                }
             } else if (subIndex === 0 && typeof item === 'string') {
                 // For first field, if item is a string, use it directly
                 subValue = item;
@@ -748,8 +811,35 @@ export class DashboardService {
                     html += '>';
                     break;
                     
+                case 'hash':
+                    html += `<div class="hash-field">`;
+                    html += `<input type="text" name="${subFieldKey}" value="${subValue}" readonly>`;
+                    html += `<button type="button" onclick="generateHash('${subFieldKey}', 32)">Generate</button>`;
+                    html += `</div>`;
+                    break;
+                    
                 case 'multiline':
                     html += `<textarea name="${subFieldKey}" rows="3">${subValue}</textarea>`;
+                    break;
+                    
+                case 'array[textbox]':
+                    // Handle sub-array fields like options in mcp_services
+                    let arrayValues = Array.isArray(subValue) ? subValue : (subValue ? subValue.split(',').map(v => v.trim()) : []);
+                    html += `<div class="array-field" id="${subFieldKey}_container">`;
+                    
+                    if (arrayValues.length === 0) {
+                        arrayValues.push(''); // Add at least one empty item
+                    }
+                    
+                    arrayValues.forEach((arrayItem, arrayIndex) => {
+                        html += `<div class="array-item" data-index="${arrayIndex}">`;
+                        html += `<input type="text" name="${subFieldKey}[${arrayIndex}]" value="${arrayItem}" placeholder="Enter value">`;
+                        html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
+                        html += `</div>`;
+                    });
+                    
+                    html += `</div>`;
+                    html += `<button type="button" class="add-array-item" onclick="addArrayItem('${subFieldKey}')">Add Item</button>`;
                     break;
                     
                 default:
@@ -759,9 +849,7 @@ export class DashboardService {
             html += `</div>`;
         });
         
-        if (index > 0) {
-            html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
-        }
+        html += `<button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>`;
         html += `</div>`;
         
         return html;
@@ -992,11 +1080,134 @@ export class DashboardService {
     
     // API endpoint to generate hash
     setupHashGenerationRoute() {
-        this.router.post('/api/generate-hash', (req, res) => {
+        this.router.post('/api/generate-hash', this.requireAuth.bind(this), (req, res) => {
             const { length } = req.body;
             const hash = this.generateRandomHash(length || 32);
             res.json({ hash });
         });
+    }
+    
+    // User management routes
+    setupUserRoutes() {
+        // Get all users
+        this.router.get('/api/users', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                await this.loadDashboardConfig(); // Refresh config
+                const users = this.config.dashboard.users.map(user => ({
+                    email: user.email
+                }));
+                res.json(users);
+            } catch (error) {
+                console.error('Error loading users:', error);
+                res.status(500).json({ error: 'Failed to load users' });
+            }
+        });
+        
+        // Add new user
+        this.router.post('/api/users', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const { email, password } = req.body;
+                
+                if (!email || !password) {
+                    return res.status(400).json({ error: 'Email and password required' });
+                }
+                
+                // Check if user already exists
+                await this.loadDashboardConfig();
+                const existingUser = this.config.dashboard.users.find(u => u.email === email);
+                if (existingUser) {
+                    return res.status(400).json({ error: 'User already exists' });
+                }
+                
+                // Hash password and add user
+                const passwordHash = await bcrypt.hash(password, 12);
+                this.config.dashboard.users.push({
+                    email,
+                    password_hash: passwordHash
+                });
+                
+                await this.saveDashboardConfig();
+                res.json({ success: true, message: 'User added successfully' });
+            } catch (error) {
+                console.error('Error adding user:', error);
+                res.status(500).json({ error: 'Failed to add user' });
+            }
+        });
+        
+        // Update user
+        this.router.put('/api/users/:email', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const originalEmail = decodeURIComponent(req.params.email);
+                const { email, password } = req.body;
+                
+                if (!email) {
+                    return res.status(400).json({ error: 'Email required' });
+                }
+                
+                await this.loadDashboardConfig();
+                const userIndex = this.config.dashboard.users.findIndex(u => u.email === originalEmail);
+                if (userIndex === -1) {
+                    return res.status(404).json({ error: 'User not found' });
+                }
+                
+                // Update email
+                this.config.dashboard.users[userIndex].email = email;
+                
+                // Update password if provided
+                if (password) {
+                    this.config.dashboard.users[userIndex].password_hash = await bcrypt.hash(password, 12);
+                }
+                
+                await this.saveDashboardConfig();
+                res.json({ success: true, message: 'User updated successfully' });
+            } catch (error) {
+                console.error('Error updating user:', error);
+                res.status(500).json({ error: 'Failed to update user' });
+            }
+        });
+        
+        // Delete user
+        this.router.delete('/api/users/:email', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const email = decodeURIComponent(req.params.email);
+                
+                // Prevent deletion of current user
+                if (email === req.session.userEmail) {
+                    return res.status(400).json({ error: 'Cannot delete your own account' });
+                }
+                
+                await this.loadDashboardConfig();
+                const userIndex = this.config.dashboard.users.findIndex(u => u.email === email);
+                if (userIndex === -1) {
+                    return res.status(404).json({ error: 'User not found' });
+                }
+                
+                // Prevent deletion if only one user remains
+                if (this.config.dashboard.users.length === 1) {
+                    return res.status(400).json({ error: 'Cannot delete the last user' });
+                }
+                
+                this.config.dashboard.users.splice(userIndex, 1);
+                await this.saveDashboardConfig();
+                res.json({ success: true, message: 'User deleted successfully' });
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                res.status(500).json({ error: 'Failed to delete user' });
+            }
+        });
+    }
+    
+    // Save dashboard configuration
+    async saveDashboardConfig() {
+        try {
+            const configPath = path.resolve(this.appPath + '/config/dashboard.yaml');
+            const yamlContent = yaml.stringify(this.config);
+            await fs.writeFile(configPath, yamlContent, 'utf8');
+            console.log('Dashboard configuration saved successfully');
+        } catch (error) {
+            console.error('Error saving dashboard config:', error);
+            throw error;
+        }
     }
     
     getRouter() {

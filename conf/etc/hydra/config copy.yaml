@@ -1,0 +1,87 @@
+dsn: sqlite:///hydra-data/hydra.sqlite?_fk=true
+
+urls:
+  self:
+    # DASHBOARD
+    # friendly_name: Server public domain name
+    # mandatory: true
+    # allowed_values: null
+    # field_type: textbox
+    # validation: ^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$
+    # prepend: https://
+    # append: /oauth
+    issuer: https://mcp.mahn.it/oauth
+  # DASHBOARD
+  # friendly_name: Server public domain name
+  # mandatory: true
+  # allowed_values: null
+  # field_type: textbox
+  # validation: ^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$
+  # prepend: https://
+  # append: /login    
+  login: https://mcp.mahn.it/oauth/login
+  # DASHBOARD
+  # friendly_name: Server public domain name
+  # mandatory: true
+  # allowed_values: null
+  # field_type: textbox
+  # validation: ^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$
+  # prepend: https://
+  # append: /consent  
+  consent: https://mcp.mahn.it/oauth/consent
+
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+    cors:
+      enabled: true
+
+log:
+  # DASHBOARD
+  # friendly_name: Server log level
+  # mandatory: true
+  # allowed_values: info, debug, warn, error
+  # field_type: dropdown
+  # validation: null
+  level: debug
+  # DASHBOARD
+  # friendly_name: Should the Hydra server leak sensitive data in the logfiles (use only for debugging)
+  # mandatory: true
+  # allowed_values: true, false 
+  # field_type: dropdown
+  # validation: null  
+  leak_sensitive_values: true
+
+secrets:
+  # DASHBOARD
+  # friendly_name: Hydra system secret
+  # mandatory: true
+  # allowed_values: null
+  # field_type: array[hash]
+  # validation: ^[a-z0-9]{32}$
+  # length: 32
+  system: 
+    - hWjyCRkVonQ2o1fhK2Ti4v68Ns8KTJFu
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+    default_scope: 
+      - openid
+      - profile
+      - email
+      - mcp:read
+
+webfinger:
+  oidc_discovery:
+    # DASHBOARD
+    # friendly_name: Server public domain name
+    # mandatory: true
+    # allowed_values: null
+    # field_type: textbox
+    # validation: ^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$
+    # prepend: https://
+    # append: /register  
+    client_registration_url: https://mcp.mahn.it/oauth/register

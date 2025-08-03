@@ -4,70 +4,485 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MCP Configuration Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
     <style>
-        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .section { border: 1px solid #ddd; margin-bottom: 20px; border-radius: 8px; }
-        .section-header { background: #f5f5f5; padding: 15px; font-weight: bold; border-radius: 8px 8px 0 0; }
-        .section-content { padding: 20px; }
-        .field-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        textarea { height: 100px; }
-        .array-input { margin-bottom: 5px; }
-        .add-array-item { background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
-        .remove-array-item { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-left: 10px; }
-        .submit-btn { background: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        .submit-btn:hover { background: #218838; }
-        .general-section { background: #e8f4f8; }
-        .auth-form { max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-        .auth-form input { margin-bottom: 10px; }
-        .error { color: red; margin: 10px 0; }
-        .success { color: green; margin: 10px 0; }
-        .required { color: red; }
-        .help-icon { cursor: help; margin-left: 5px; }
-        .array-field { border: 1px solid #eee; padding: 10px; margin-bottom: 10px; }
-        .array-item { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; background: #f9f9f9; }
-        .sub-field { margin-bottom: 10px; }
-        .sub-field label { font-weight: normal; color: #666; }
-        .hash-field { display: flex; gap: 10px; }
-        .hash-field input { flex: 1; }
-        .hash-field button { background: #6c757d; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+        .dashboard-container {
+            max-width: 1200px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            margin: 20px auto;
+        }
+        
+        .dashboard-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .dashboard-header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .logout-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background 0.3s ease;
+        }
+        
+        .logout-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .dashboard-content {
+            padding: 30px;
+        }
+        
+        .section {
+            border: 1px solid #e2e8f0;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            background: #f7fafc;
+            padding: 15px 20px;
+            font-weight: 600;
+            font-size: 18px;
+            color: #2d3748;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .section-content {
+            padding: 20px;
+        }
+        
+        .field-group {
+            margin-bottom: 20px;
+        }
+        
+        .field-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .field-group input,
+        .field-group select,
+        .field-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .field-group input:focus,
+        .field-group select:focus,
+        .field-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .field-group textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        
+        .array-field {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            background: #f7fafc;
+        }
+        
+        .array-item {
+            border: 1px solid #cbd5e0;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            position: relative;
+        }
+        
+        .sub-field {
+            margin-bottom: 15px;
+        }
+        
+        .sub-field label {
+            font-weight: normal;
+            color: #4a5568;
+            font-size: 13px;
+        }
+        
+        .hash-field {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .hash-field input {
+            flex: 1;
+        }
+        
+        .hash-field button,
+        .add-array-item,
+        .remove-array-item {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .hash-field button:hover,
+        .add-array-item:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .remove-array-item {
+            background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        .remove-array-item:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(229, 62, 62, 0.3);
+        }
+        
+        .submit-btn {
+            background: linear-gradient(135deg, #38a169 0%, #2f855a 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            display: block;
+            margin: 30px auto 0;
+        }
+        
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(56, 161, 105, 0.3);
+        }
+        
+        .required {
+            color: #e53e3e;
+        }
+        
+        .help-icon {
+            cursor: help;
+            margin-left: 5px;
+            color: #667eea;
+        }
+        
+        .success {
+            background: #f0fff4;
+            color: #22543d;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #9ae6b4;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c53030;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #fed7d7;
+        }
+        
+        .general-section .section-header {
+            background: linear-gradient(135deg, #e6fffa 0%, #b2f5ea 100%);
+            color: #234e52;
+        }
+        
+        /* User Management Styles */
+        .user-management {
+            margin-top: 30px;
+        }
+        
+        .user-list {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+        }
+        
+        .user-email {
+            font-weight: 500;
+            color: #2d3748;
+        }
+        
+        .user-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .edit-user-btn,
+        .delete-user-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .edit-user-btn {
+            background: #667eea;
+            color: white;
+        }
+        
+        .delete-user-btn {
+            background: #e53e3e;
+            color: white;
+        }
+        
+        .delete-user-btn:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+        }
+        
+        .add-user-form {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 15px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .form-row .field-group {
+            flex: 1;
+        }
+        
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 0;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px 12px 0 0;
+        }
+        
+        .modal-body {
+            padding: 20px;
+        }
+        
+        .close {
+            color: rgba(255,255,255,0.8);
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: white;
+        }
     </style>
 </head>
 <body>
-    <h1>MCP Configuration Dashboard</h1>
-    
     <!-- Authentication Form (shown when not authenticated) -->
     <div id="auth-section" style="display: none;">
-        <div class="auth-form">
-            <h2>Login</h2>
-            <form id="login-form">
-                <input type="email" id="email" placeholder="Email" required>
-                <input type="password" id="password" placeholder="Password" required>
-                <button type="submit" class="submit-btn">Login</button>
-            </form>
-            <div id="auth-error" class="error" style="display: none;"></div>
+        <div class="container">
+            <div class="header">
+                <h1>MCP Dashboard</h1>
+                <p>Configuration Management</p>
+            </div>
+            <div class="form-container">
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <button type="submit" class="btn">Login</button>
+                </form>
+                <div id="auth-error" class="error-message" style="display: none;"></div>
+            </div>
         </div>
     </div>
     
-    <!-- Configuration Form (shown when authenticated) -->
-    <div id="config-section" style="display: none;">
-        <form id="config-form">
-            {{FORM_CONTENT}}
-            <button type="submit" class="submit-btn">Save Configuration</button>
-        </form>
-        <div id="save-message" class="success" style="display: none;"></div>
-        <div id="save-error" class="error" style="display: none;"></div>
+    <!-- Configuration Dashboard (shown when authenticated) -->
+    <div id="dashboard-section" style="display: none;">
+        <div class="dashboard-container">
+            <div class="dashboard-header">
+                <h1>MCP Configuration Dashboard</h1>
+                <div class="user-info">
+                    <span id="current-user-email"></span>
+                    <a href="#" id="logout-btn" class="logout-btn">Logout</a>
+                </div>
+            </div>
+            
+            <div class="dashboard-content">
+                <!-- Configuration Form -->
+                <form id="config-form">
+                    {{FORM_CONTENT}}
+                    <button type="submit" class="submit-btn">Save Configuration</button>
+                </form>
+                
+                <!-- Messages -->
+                <div id="save-message" class="success" style="display: none;"></div>
+                <div id="save-error" class="error" style="display: none;"></div>
+                
+                <!-- User Management Section -->
+                <div class="user-management">
+                    <div class="section">
+                        <div class="section-header">Dashboard Users</div>
+                        <div class="section-content">
+                            <div id="user-list" class="user-list">
+                                <!-- Users will be loaded here -->
+                            </div>
+                            
+                            <button type="button" id="add-user-btn" class="btn" style="margin-top: 15px;">Add New User</button>
+                            
+                            <div id="add-user-form" class="add-user-form" style="display: none;">
+                                <div class="form-row">
+                                    <div class="field-group">
+                                        <label for="new-user-email">Email</label>
+                                        <input type="email" id="new-user-email" required>
+                                    </div>
+                                    <div class="field-group">
+                                        <label for="new-user-password">Password</label>
+                                        <input type="password" id="new-user-password" required>
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                                    <button type="button" id="save-new-user" class="btn">Save User</button>
+                                    <button type="button" id="cancel-new-user" class="logout-btn">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Edit User Modal -->
+    <div id="edit-user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="close">&times;</span>
+                <h2>Edit User</h2>
+            </div>
+            <div class="modal-body">
+                <form id="edit-user-form">
+                    <input type="hidden" id="edit-user-original-email">
+                    <div class="field-group">
+                        <label for="edit-user-email">Email</label>
+                        <input type="email" id="edit-user-email" required>
+                    </div>
+                    <div class="field-group">
+                        <label for="edit-user-password">New Password (leave blank to keep current)</label>
+                        <input type="password" id="edit-user-password">
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn">Update User</button>
+                        <button type="button" class="logout-btn" onclick="closeEditModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
     
     <script>
-        let isAuthenticated = false;
+        let currentUserEmail = '';
         
         // Check authentication status
-        function checkAuth() {
-            // For now, show config section directly
-            // In production, you'd check a session/token
-            document.getElementById('config-section').style.display = 'block';
+        async function checkAuth() {
+            try {
+                const response = await fetch('/dashboard/api/auth-status');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.authenticated) {
+                        currentUserEmail = data.email;
+                        document.getElementById('current-user-email').textContent = data.email;
+                        document.getElementById('dashboard-section').style.display = 'block';
+                        document.getElementById('auth-section').style.display = 'none';
+                        loadUsers();
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
+            }
+            
+            document.getElementById('auth-section').style.display = 'flex';
+            document.getElementById('dashboard-section').style.display = 'none';
         }
         
         // Handle login
@@ -84,9 +499,7 @@
                 });
                 
                 if (response.ok) {
-                    isAuthenticated = true;
-                    document.getElementById('auth-section').style.display = 'none';
-                    document.getElementById('config-section').style.display = 'block';
+                    checkAuth();
                 } else {
                     const error = await response.json();
                     document.getElementById('auth-error').textContent = error.error;
@@ -95,6 +508,17 @@
             } catch (error) {
                 document.getElementById('auth-error').textContent = 'Connection error';
                 document.getElementById('auth-error').style.display = 'block';
+            }
+        });
+        
+        // Handle logout
+        document.getElementById('logout-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            try {
+                await fetch('/dashboard/logout', { method: 'POST' });
+                checkAuth();
+            } catch (error) {
+                console.error('Logout error:', error);
             }
         });
         
@@ -125,28 +549,174 @@
             }
         });
         
-        // Add array item function
+        // Load users
+        async function loadUsers() {
+            try {
+                const response = await fetch('/dashboard/api/users');
+                if (response.ok) {
+                    const users = await response.json();
+                    displayUsers(users);
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+        
+        // Display users
+        function displayUsers(users) {
+            const userList = document.getElementById('user-list');
+            userList.innerHTML = '';
+            
+            users.forEach(user => {
+                const userItem = document.createElement('div');
+                userItem.className = 'user-item';
+                
+                const isCurrentUser = user.email === currentUserEmail;
+                
+                userItem.innerHTML = `
+                    <span class="user-email">${user.email}</span>
+                    <div class="user-actions">
+                        <button class="edit-user-btn" onclick="editUser('${user.email}')">Edit</button>
+                        <button class="delete-user-btn" onclick="deleteUser('${user.email}')" ${isCurrentUser ? 'disabled title="Cannot delete your own account"' : ''}>Delete</button>
+                    </div>
+                `;
+                
+                userList.appendChild(userItem);
+            });
+        }
+        
+        // Add user functionality
+        document.getElementById('add-user-btn').addEventListener('click', () => {
+            document.getElementById('add-user-form').style.display = 'block';
+            document.getElementById('add-user-btn').style.display = 'none';
+        });
+        
+        document.getElementById('cancel-new-user').addEventListener('click', () => {
+            document.getElementById('add-user-form').style.display = 'none';
+            document.getElementById('add-user-btn').style.display = 'block';
+            document.getElementById('new-user-email').value = '';
+            document.getElementById('new-user-password').value = '';
+        });
+        
+        document.getElementById('save-new-user').addEventListener('click', async () => {
+            const email = document.getElementById('new-user-email').value;
+            const password = document.getElementById('new-user-password').value;
+            
+            if (!email || !password) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/dashboard/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                if (response.ok) {
+                    document.getElementById('cancel-new-user').click();
+                    loadUsers();
+                } else {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to add user');
+                }
+            } catch (error) {
+                alert('Connection error');
+            }
+        });
+        
+        // Edit user functionality
+        function editUser(email) {
+            document.getElementById('edit-user-original-email').value = email;
+            document.getElementById('edit-user-email').value = email;
+            document.getElementById('edit-user-password').value = '';
+            document.getElementById('edit-user-modal').style.display = 'block';
+        }
+        
+        function closeEditModal() {
+            document.getElementById('edit-user-modal').style.display = 'none';
+        }
+        
+        document.getElementById('edit-user-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const originalEmail = document.getElementById('edit-user-original-email').value;
+            const email = document.getElementById('edit-user-email').value;
+            const password = document.getElementById('edit-user-password').value;
+            
+            const data = { email };
+            if (password) {
+                data.password = password;
+            }
+            
+            try {
+                const response = await fetch(`/dashboard/api/users/${encodeURIComponent(originalEmail)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    closeEditModal();
+                    loadUsers();
+                    if (originalEmail === currentUserEmail) {
+                        currentUserEmail = email;
+                        document.getElementById('current-user-email').textContent = email;
+                    }
+                } else {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to update user');
+                }
+            } catch (error) {
+                alert('Connection error');
+            }
+        });
+        
+        // Delete user functionality
+        async function deleteUser(email) {
+            if (email === currentUserEmail) {
+                alert('Cannot delete your own account');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to delete user: ${email}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/dashboard/api/users/${encodeURIComponent(email)}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to delete user');
+                }
+            } catch (error) {
+                alert('Connection error');
+            }
+        }
+        
+        // Array management functions (keep existing functionality)
         function addArrayItem(fieldName) {
             const container = document.getElementById(fieldName + '_container');
             const existingItems = container.querySelectorAll('.array-item');
             const newIndex = existingItems.length;
             
-            // Get the first item as template
             const firstItem = container.querySelector('.array-item');
             if (firstItem) {
                 const newItem = firstItem.cloneNode(true);
                 newItem.setAttribute('data-index', newIndex);
                 
-                // Update input names and clear values
                 newItem.querySelectorAll('input, textarea').forEach(input => {
-                    // Handle both simple arrays [index] and complex arrays [index][field]
                     if (input.name.includes('][')) {
-                        // Complex array: fieldName[0][subfield] -> fieldName[newIndex][subfield]
-                        const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                        const name = input.name.replace(/\\[\\d+\\]/, `[${newIndex}]`);
                         input.name = name;
                     } else {
-                        // Simple array: fieldName[0] -> fieldName[newIndex]
-                        const name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                        const name = input.name.replace(/\\[\\d+\\]/, `[${newIndex}]`);
                         input.name = name;
                     }
                     input.value = '';
@@ -156,7 +726,6 @@
             }
         }
         
-        // Remove array item function
         function removeArrayItem(button) {
             const item = button.closest('.array-item');
             if (item) {
@@ -164,7 +733,6 @@
             }
         }
         
-        // Generate hash function
         async function generateHash(fieldId, length) {
             try {
                 const response = await fetch('/dashboard/api/generate-hash', {
@@ -183,6 +751,14 @@
                 alert('Connection error');
             }
         }
+        
+        // Modal close handlers
+        document.querySelector('.close').addEventListener('click', closeEditModal);
+        window.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('edit-user-modal')) {
+                closeEditModal();
+            }
+        });
         
         // Initialize
         checkAuth();
