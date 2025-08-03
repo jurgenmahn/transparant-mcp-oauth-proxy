@@ -286,6 +286,8 @@ export class LauncherProxyService {
                         let stderr = '';
                         let outputLines = 0;
 
+                        
+
                         installProc.stdout.on('data', (data) => {
                             stdout += data.toString();
                             const lines = data.toString().split('\n').filter(line => line.trim());
@@ -324,6 +326,8 @@ export class LauncherProxyService {
                         setTimeout(() => {
                             if (!installProc.killed) {
                                 console.log(`⏰ Install command taking longer than 5 minutes, still running...`);
+                                const commandString = proc.spawnargs.join(' ');
+                                console.log("install command: " + commandString);                                 
                             }
                         }, 5 * 60 * 1000); // 5 minutes
                     });

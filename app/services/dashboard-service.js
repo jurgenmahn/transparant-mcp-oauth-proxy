@@ -5,6 +5,10 @@ import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
 import session from 'express-session';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export class DashboardService {
     constructor(appPath) {
@@ -15,6 +19,7 @@ export class DashboardService {
         this.setupRoutes();
         this.setupHashGenerationRoute();
         this.setupUserRoutes();
+        this.setupRestartRoutes();
     }
     
     setupSession() {
@@ -110,8 +115,12 @@ export class DashboardService {
         // Save configuration
         this.router.post('/save-config', this.requireAuth.bind(this), async (req, res) => {
             try {
-                await this.saveConfiguration(req.body);
-                res.json({ success: true, message: 'Configuration saved successfully' });
+                const result = await this.saveConfiguration(req.body);
+                res.json({ 
+                    success: true, 
+                    message: 'Configuration saved successfully',
+                    servicesNeedingRestart: result.servicesNeedingRestart
+                });
             } catch (error) {
                 console.error('Error saving configuration:', error);
                 res.status(500).json({ success: false, error: 'Failed to save configuration' });
@@ -206,6 +215,11 @@ export class DashboardService {
                 if (!field.sub_fields) field.sub_fields = [];
                 if (!field.sub_fields[index]) field.sub_fields[index] = {};
                 field.sub_fields[index].mandatory = line.substring(line.indexOf(':') + 1).trim() === 'true';
+            } else if (line.match(/^help\[(\d+)\]:/)) {
+                const index = parseInt(line.match(/^help\[(\d+)\]:/)[1]);
+                if (!field.sub_fields) field.sub_fields = [];
+                if (!field.sub_fields[index]) field.sub_fields[index] = {};
+                field.sub_fields[index].help = line.substring(line.indexOf(':') + 1).trim();
             }
         }
         
@@ -361,6 +375,11 @@ export class DashboardService {
             const index = parseInt(match[1]);
             if (!field.sub_fields[index]) field.sub_fields[index] = {};
             field.sub_fields[index].mandatory = trimmed.substring(trimmed.indexOf(':') + 1).trim() === 'true';
+        } else if (trimmed.match(/^help\[(\d+)\]:/)) {
+            const match = trimmed.match(/^help\[(\d+)\]:/);
+            const index = parseInt(match[1]);
+            if (!field.sub_fields[index]) field.sub_fields[index] = {};
+            field.sub_fields[index].help = trimmed.substring(trimmed.indexOf(':') + 1).trim();
         }
     }
     
@@ -634,9 +653,20 @@ export class DashboardService {
                     break;
                     
                 case 'password':
-                    fieldHtml += `<input type="password" name="${fieldKey}" id="${fieldKey}" placeholder="Enter new password"`;
-                    if (field.mandatory) fieldHtml += ' required';
-                    fieldHtml += '>';
+                    const hasExistingPassword = currentValue && currentValue.trim() !== '';
+                    fieldHtml += `<div class="password-field">`;
+                    if (hasExistingPassword) {
+                        // Existing password - disabled by default with edit button
+                        fieldHtml += `<input type="password" name="${fieldKey}" id="${fieldKey}" placeholder="Password unchanged" disabled>`;
+                        fieldHtml += `<button type="button" class="edit-password-btn" onclick="togglePasswordEdit('${fieldKey}', true)">Edit</button>`;
+                        fieldHtml += `<button type="button" class="cancel-password-btn" onclick="togglePasswordEdit('${fieldKey}', false)" style="display: none;">Cancel</button>`;
+                    } else {
+                        // New password - enabled and required
+                        fieldHtml += `<input type="password" name="${fieldKey}" id="${fieldKey}" placeholder="Enter password"`;
+                        if (field.mandatory) fieldHtml += ' required';
+                        fieldHtml += '>';
+                    }
+                    fieldHtml += `</div>`;
                     break;
                     
                 case 'hash':
@@ -789,7 +819,14 @@ export class DashboardService {
             }
             
             html += `<div class="sub-field">`;
-            html += `<label>${subFieldName}</label>`;
+            html += `<label>${subFieldName}`;
+            
+            // Add help icon if help text exists for this sub-field
+            if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].help) {
+                html += ` <span class="help-icon" title="${field.sub_fields[subIndex].help}">ⓘ</span>`;
+            }
+            
+            html += `</label>`;
             
             switch (subType.type) {
                 case 'textbox':
@@ -804,11 +841,22 @@ export class DashboardService {
                     break;
                     
                 case 'password':
-                    html += `<input type="password" name="${subFieldKey}" placeholder="Enter password"`;
-                    if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].mandatory) {
-                        html += ' required';
+                    const hasExistingSubPassword = subValue && subValue.trim() !== '';
+                    html += `<div class="password-field">`;
+                    if (hasExistingSubPassword) {
+                        // Existing password - disabled by default with edit button
+                        html += `<input type="password" name="${subFieldKey}" id="${subFieldKey}" placeholder="Password unchanged" disabled>`;
+                        html += `<button type="button" class="edit-password-btn" onclick="togglePasswordEdit('${subFieldKey}', true)">Edit</button>`;
+                        html += `<button type="button" class="cancel-password-btn" onclick="togglePasswordEdit('${subFieldKey}', false)" style="display: none;">Cancel</button>`;
+                    } else {
+                        // New password - enabled and required
+                        html += `<input type="password" name="${subFieldKey}" id="${subFieldKey}" placeholder="Enter password"`;
+                        if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].mandatory) {
+                            html += ' required';
+                        }
+                        html += '>';
                     }
-                    html += '>';
+                    html += `</div>`;
                     break;
                     
                 case 'hash':
@@ -862,7 +910,7 @@ export class DashboardService {
         // Group form data by file
         const fileUpdates = {};
         
-        Object.entries(formData).forEach(([fieldKey, value]) => {
+        Object.entries(formData).forEach(([fieldKey, value]) => {            
             if (fieldKey.startsWith('general::')) {
                 // Apply general fields to all files that have them
                 const generalFieldName = fieldKey.split('::')[1];
@@ -873,25 +921,51 @@ export class DashboardService {
                     }
                 });
             } else {
-                // File-specific field
+                // File-specific field - but check if there are multiple fields with same friendly_name
                 const data = values[fieldKey];
                 if (data) {
+                    // Add the primary field
                     if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
                     fileUpdates[data.filePath].push({ field: data.field, value });
+                    
+                    // Also check for other fields with the same friendly_name in ALL files (including same file)
+                    const friendlyName = data.field.friendly_name;
+                    Object.entries(values).forEach(([otherFieldKey, otherData]) => {
+                        if (otherFieldKey !== fieldKey && 
+                            otherData.field.friendly_name === friendlyName) {
+                            // Found another field with same friendly_name
+                            if (!fileUpdates[otherData.filePath]) fileUpdates[otherData.filePath] = [];
+                            fileUpdates[otherData.filePath].push({ field: otherData.field, value });
+                        }
+                    });
                 }
             }
         });
         
-        // Update each file
+        // Update each file and track which services need restart
+        const servicesNeedingRestart = [];
+        
         for (const [filePath, updates] of Object.entries(fileUpdates)) {
             try {
                 await this.updateConfigFile(filePath, updates);
                 console.log(`Updated config file: ${filePath}`);
+                
+                // Find the config definition for this file to get restart command
+                const configFile = this.config.dashboard.configs.files.find(f => f.location === filePath);
+                if (configFile && configFile.restart_command) {
+                    servicesNeedingRestart.push({
+                        name: configFile.name,
+                        filePath: filePath,
+                        restartCommand: configFile.restart_command
+                    });
+                }
             } catch (error) {
                 console.error(`Error updating file ${filePath}:`, error);
                 throw error;
             }
         }
+        
+        return { servicesNeedingRestart };
     }
     
     // Update config file with new values
@@ -902,6 +976,11 @@ export class DashboardService {
         for (const update of updates) {
             const { field, value } = update;
             let processedValue = await this.processFieldValue(field, value);
+            
+            // Skip updating field if processedValue is null (e.g., empty password = don't change)
+            if (processedValue === null && field.field_type === 'password') {
+                continue;
+            }
             
             // Find the line with this field
             const fieldPattern = new RegExp(`^(\\s*)${field.yaml_key}:\\s*(.*)$`);
@@ -968,6 +1047,7 @@ export class DashboardService {
                 if (value && value.trim() !== '') {
                     return await bcrypt.hash(value, 10);
                 }
+                // Return null for empty passwords - this means "don't change existing password"
                 return null;
                 
             case 'hash':
@@ -1193,6 +1273,59 @@ export class DashboardService {
             } catch (error) {
                 console.error('Error deleting user:', error);
                 res.status(500).json({ error: 'Failed to delete user' });
+            }
+        });
+    }
+    
+    setupRestartRoutes() {
+        // Execute service restart
+        this.router.post('/api/restart-service', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const { serviceName, restartCommand } = req.body;
+                
+                if (!serviceName || !restartCommand) {
+                    return res.status(400).json({ error: 'Service name and restart command are required' });
+                }
+                
+                console.log(`🔄 Restarting service: ${serviceName} with command: ${restartCommand}`);
+                
+                // Special handling for MCP Server configuration restart - warn about dashboard restart
+                const isDashboardRestart = serviceName === 'MCP Server configuration';
+                
+                try {
+                    const { stdout, stderr } = await execAsync(restartCommand);
+                    console.log(`✅ Service restart completed for ${serviceName}`);
+                    if (stdout) console.log('Restart stdout:', stdout);
+                    if (stderr) console.log('Restart stderr:', stderr);
+                    
+                    res.json({ 
+                        success: true, 
+                        message: `${serviceName} restarted successfully`,
+                        isDashboardRestart
+                    });
+                } catch (execError) {
+                    console.error(`❌ Service restart failed for ${serviceName}:`, execError);
+                    res.status(500).json({ 
+                        error: `Failed to restart ${serviceName}: ${execError.message}`,
+                        isDashboardRestart
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Error in restart service:', error);
+                res.status(500).json({ error: 'Internal server error during restart' });
+            }
+        });
+        
+        // Get services that need restart after config changes
+        this.router.get('/api/restart-status', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                // This would be populated after a config save
+                // For now, return empty array
+                res.json({ servicesNeedingRestart: [] });
+            } catch (error) {
+                console.error('Error getting restart status:', error);
+                res.status(500).json({ error: 'Failed to get restart status' });
             }
         });
     }
