@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'fs';
+import multer from 'multer';
 import { DashboardService } from './services/dashboard-service.js';
 import { LauncherProxyService } from './services/launcher-proxy-service.js';
 import { UnifiedOAuthService } from './services/unified-oauth-service.js';
@@ -386,6 +387,10 @@ class MCPServer {
 
 
         this.app.use(express.urlencoded({ extended: true }));
+        
+        // Add multer middleware for multipart/form-data
+        const upload = multer();
+        this.app.use(upload.none()); // For forms without file uploads
 
         // Ensure query parsing is enabled
         this.app.use((req, res, next) => {

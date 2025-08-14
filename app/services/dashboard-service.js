@@ -115,15 +115,37 @@ export class DashboardService {
         // Save configuration
         this.router.post('/save-config', this.requireAuth.bind(this), async (req, res) => {
             try {
+                console.log('🔧 Save configuration request received');
+                console.log('📝 Form data keys:', Object.keys(req.body));
+                console.log('📝 Form data preview:', Object.fromEntries(
+                    Object.entries(req.body).slice(0, 3).map(([k, v]) => [k, typeof v === 'string' && v.length > 50 ? v.substring(0, 50) + '...' : v])
+                ));
+                
                 const result = await this.saveConfiguration(req.body);
-                res.json({ 
+                
+                const response = {
                     success: true, 
                     message: 'Configuration saved successfully',
-                    servicesNeedingRestart: result.servicesNeedingRestart
+                    servicesNeedingRestart: result.servicesNeedingRestart,
+                    debug: {
+                        filesUpdated: result.filesUpdated || [],
+                        fieldsUpdated: result.fieldsUpdated || [],
+                        formFieldsProcessed: Object.keys(req.body).length,
+                        generalFieldsDetected: Object.keys(req.body).filter(k => k.startsWith('general::')).length,
+                        totalUpdatesApplied: result.totalUpdatesApplied || 0
+                    }
+                };
+                
+                console.log('✅ Save response:', {
+                    servicesCount: response.servicesNeedingRestart.length,
+                    filesUpdated: response.debug.filesUpdated.length,
+                    fieldsUpdated: response.debug.fieldsUpdated.length
                 });
+                
+                res.json(response);
             } catch (error) {
-                console.error('Error saving configuration:', error);
-                res.status(500).json({ success: false, error: 'Failed to save configuration' });
+                console.error('❌ Error saving configuration:', error);
+                res.status(500).json({ success: false, error: 'Failed to save configuration', debug: { error: error.message } });
             }
         });
         
@@ -522,9 +544,9 @@ export class DashboardService {
                 const fields = await this.extractFieldDefinitions(filePath);
                 
                 for (const field of fields) {
-                    // Use friendly_name for identification if available, otherwise use yaml_key
+                    // Create a truly unique key using both friendly_name and yaml_key to prevent overwrites
                     const fieldIdentifier = field.friendly_name || field.yaml_key;
-                    const uniqueKey = `${file.name}::${fieldIdentifier}`;
+                    const uniqueKey = `${file.name}::${fieldIdentifier}::${field.yaml_key}`;
                     
                     values[uniqueKey] = {
                         file: file.name,
@@ -905,41 +927,103 @@ export class DashboardService {
     
     // Save configuration files
     async saveConfiguration(formData) {
+        console.log('🔧 saveConfiguration called with', Object.keys(formData).length, 'form fields');
+        
         const values = await this.loadCurrentValues();
+        console.log('📋 Loaded', Object.keys(values).length, 'current field values');
         
         // Group form data by file
         const fileUpdates = {};
+        const debugInfo = {
+            filesUpdated: [],
+            fieldsUpdated: [],
+            totalUpdatesApplied: 0,
+            processedFields: []
+        };
         
-        Object.entries(formData).forEach(([fieldKey, value]) => {            
+        Object.entries(formData).forEach(([fieldKey, value]) => {
+            const valuePreview = typeof value === 'string' 
+                ? (value.length > 30 ? value.substring(0, 30) + '...' : value)
+                : (typeof value === 'object' ? JSON.stringify(value) : String(value));
+            console.log(`🔍 Processing form field: "${fieldKey}" = "${valuePreview}"`);
+            debugInfo.processedFields.push({ fieldKey, valuePreview });
+            
             if (fieldKey.startsWith('general::')) {
                 // Apply general fields to all files that have them
                 const generalFieldName = fieldKey.split('::')[1];
+                console.log(`📢 General field detected: "${generalFieldName}"`);
+                
+                let matchingFields = 0;
                 Object.values(values).forEach(data => {
                     if (data.field.friendly_name === generalFieldName) {
+                        console.log(`  ✅ Found matching field in ${data.filePath}: ${data.field.yaml_key}`);
                         if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
                         fileUpdates[data.filePath].push({ field: data.field, value });
+                        matchingFields++;
+                        debugInfo.fieldsUpdated.push({
+                            file: data.filePath,
+                            yamlKey: data.field.yaml_key,
+                            yamlPath: data.field.yaml_path,
+                            friendlyName: data.field.friendly_name,
+                            newValue: value,
+                            source: 'general'
+                        });
                     }
                 });
+                console.log(`  📊 Total matching fields for "${generalFieldName}": ${matchingFields}`);
             } else {
                 // File-specific field - but check if there are multiple fields with same friendly_name
                 const data = values[fieldKey];
                 if (data) {
+                    console.log(`  ✅ Found specific field: ${data.field.yaml_key} in ${data.filePath}`);
                     // Add the primary field
                     if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
                     fileUpdates[data.filePath].push({ field: data.field, value });
+                    debugInfo.fieldsUpdated.push({
+                        file: data.filePath,
+                        yamlKey: data.field.yaml_key,
+                        yamlPath: data.field.yaml_path,
+                        friendlyName: data.field.friendly_name,
+                        newValue: value,
+                        source: 'specific'
+                    });
                     
                     // Also check for other fields with the same friendly_name in ALL files (including same file)
                     const friendlyName = data.field.friendly_name;
+                    let syncedFields = 0;
                     Object.entries(values).forEach(([otherFieldKey, otherData]) => {
                         if (otherFieldKey !== fieldKey && 
                             otherData.field.friendly_name === friendlyName) {
                             // Found another field with same friendly_name
+                            console.log(`  🔗 Syncing to: ${otherData.field.yaml_key} in ${otherData.filePath}`);
                             if (!fileUpdates[otherData.filePath]) fileUpdates[otherData.filePath] = [];
                             fileUpdates[otherData.filePath].push({ field: otherData.field, value });
+                            syncedFields++;
+                            debugInfo.fieldsUpdated.push({
+                                file: otherData.filePath,
+                                yamlKey: otherData.field.yaml_key,
+                                yamlPath: otherData.field.yaml_path,
+                                friendlyName: otherData.field.friendly_name,
+                                newValue: value,
+                                source: 'synced'
+                            });
                         }
                     });
+                    console.log(`  📊 Synced to ${syncedFields} additional fields`);
+                } else {
+                    console.log(`  ❌ Field not found in values: ${fieldKey}`);
                 }
             }
+        });
+        
+        console.log(`📊 File updates summary:`);
+        Object.entries(fileUpdates).forEach(([filePath, updates]) => {
+            console.log(`  📁 ${filePath}: ${updates.length} updates`);
+            updates.forEach(update => {
+                const pathStr = Array.isArray(update.field.yaml_path) ? update.field.yaml_path.join('.') : 'root';
+                const valueStr = typeof update.value === 'object' ? JSON.stringify(update.value) : String(update.value);
+                console.log(`    - ${update.field.yaml_key} (${pathStr}) = "${valueStr}"`);
+            });
         });
         
         // Update each file and track which services need restart
@@ -947,12 +1031,16 @@ export class DashboardService {
         
         for (const [filePath, updates] of Object.entries(fileUpdates)) {
             try {
+                debugInfo.filesUpdated.push(filePath);
+                debugInfo.totalUpdatesApplied += updates.length;
+                
                 await this.updateConfigFile(filePath, updates);
-                console.log(`Updated config file: ${filePath}`);
+                console.log(`✅ Updated config file: ${filePath} (${updates.length} changes)`);
                 
                 // Find the config definition for this file to get restart command
                 const configFile = this.config.dashboard.configs.files.find(f => f.location === filePath);
                 if (configFile && configFile.restart_command) {
+                    console.log(`🔄 Service restart required: ${configFile.name} (${configFile.restart_command})`);
                     servicesNeedingRestart.push({
                         name: configFile.name,
                         filePath: filePath,
@@ -960,35 +1048,46 @@ export class DashboardService {
                     });
                 }
             } catch (error) {
-                console.error(`Error updating file ${filePath}:`, error);
+                console.error(`❌ Error updating file ${filePath}:`, error);
                 throw error;
             }
         }
         
-        return { servicesNeedingRestart };
+        console.log(`🏁 Save completed: ${debugInfo.filesUpdated.length} files, ${debugInfo.totalUpdatesApplied} updates, ${servicesNeedingRestart.length} services need restart`);
+        
+        return { servicesNeedingRestart, ...debugInfo };
     }
     
     // Update config file with new values
     async updateConfigFile(filePath, updates) {
+        console.log(`📝 Updating file: ${filePath} with ${updates.length} updates`);
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         
         for (const update of updates) {
             const { field, value } = update;
+            const pathStr = Array.isArray(field.yaml_path) ? field.yaml_path.join(', ') : 'none';
+            const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+            console.log(`  🔧 Updating field: ${field.yaml_key} (path: [${pathStr}]) = "${valueStr}"`);
+            
             let processedValue = await this.processFieldValue(field, value);
+            console.log(`  🔀 Processed value:`, typeof processedValue === 'object' ? JSON.stringify(processedValue) : `"${processedValue}"`);
             
             // Skip updating field if processedValue is null (e.g., empty password = don't change)
             if (processedValue === null && field.field_type === 'password') {
+                console.log(`  ⏭️  Skipping password field with null value`);
                 continue;
             }
             
-            // Find the line with this field
-            const fieldPattern = new RegExp(`^(\\s*)${field.yaml_key}:\\s*(.*)$`);
-            
+            // Find the line with this field (simple approach)
+            let foundMatch = false;
             for (let i = 0; i < lines.length; i++) {
-                const match = lines[i].match(fieldPattern);
+                const match = lines[i].match(new RegExp(`^(\\s*)${field.yaml_key}:\\s*(.*)$`));
                 if (match) {
+                    foundMatch = true;
                     const indent = match[1];
+                    const oldValue = match[2];
+                    console.log(`    ✅ Matched line ${i + 1}: "${lines[i].trim()}" → updating value from "${oldValue}" to`, typeof processedValue === 'object' ? JSON.stringify(processedValue) : `"${processedValue}"`);
                     
                     if (field.field_type && field.field_type.startsWith('array[')) {
                         // Handle array fields
@@ -1026,18 +1125,26 @@ export class DashboardService {
                         }
                     } else {
                         // Handle simple fields
-                        let finalValue = processedValue;
+                        let finalValue = typeof processedValue === 'object' ? JSON.stringify(processedValue) : String(processedValue);
                         if (field.prepend) finalValue = field.prepend + finalValue;
                         if (field.append) finalValue = finalValue + field.append;
                         lines[i] = `${indent}${field.yaml_key}: ${finalValue}`;
+                        console.log(`    💾 Updated line ${i + 1}: "${lines[i].trim()}"`);
                     }
                     break;
                 }
             }
+            
+            if (!foundMatch) {
+                const pathStr = Array.isArray(field.yaml_path) ? field.yaml_path.join(', ') : 'none';
+                console.warn(`Field ${field.yaml_key} not found in ${filePath} with path [${pathStr}]`);
+            }
         }
         
         // Write updated content back to file
+        console.log(`💾 Writing updated content to: ${filePath}`);
         await fs.writeFile(filePath, lines.join('\n'), 'utf8');
+        console.log(`✅ File written successfully: ${filePath}`);
     }
     
     // Process field value based on field type
@@ -1067,6 +1174,9 @@ export class DashboardService {
     
     // Process array field values
     processArrayValue(field, value) {
+        console.log(`🔍 [DEBUG] processArrayValue called for field:`, field.yaml_key);
+        console.log(`🔍 [DEBUG] Input value type:`, typeof value);
+        console.log(`🔍 [DEBUG] Input value:`, typeof value === 'object' ? JSON.stringify(value, null, 2) : value);
         if (!value) return [];
         
         const arrayType = field.field_type.match(/array\[(.+)\]/)[1];
@@ -1143,7 +1253,8 @@ export class DashboardService {
                                 lines.push(`${indent}    ${line}`);
                             });
                         } else {
-                            lines.push(`${indent}  ${subType.name}: ${value}`);
+                            const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                            lines.push(`${indent}  ${subType.name}: ${valueStr}`);
                         }
                     }
                 });
@@ -1345,6 +1456,89 @@ export class DashboardService {
     
     getRouter() {
         return this.router;
+    }
+    
+    // Find the line number for a field considering its YAML path context
+    findFieldLineWithPath(lines, field) {
+        // Add safety checks
+        if (!field || !field.yaml_key) {
+            console.warn('findFieldLineWithPath: Invalid field object', field);
+            return -1;
+        }
+        
+        const { yaml_path, yaml_key } = field;
+        
+        // Escape regex special characters in yaml_key
+        const escapedKey = yaml_key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // If no path, use simple search
+        if (!yaml_path || yaml_path.length === 0) {
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i] && lines[i].match(new RegExp(`^\\s*${escapedKey}:\\s*`))) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        // Navigate through the YAML path to find the correct context
+        let currentIndentLevel = 0;
+        let pathIndex = 0;
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (!lines[i]) continue;
+            
+            const line = lines[i].trim();
+            
+            // Skip empty lines and comments
+            if (line === '' || line.startsWith('#')) {
+                continue;
+            }
+            
+            const lineIndent = lines[i].search(/\S/);
+            
+            // If we've completed the path, look for our target key at the correct indent
+            if (pathIndex >= yaml_path.length) {
+                const expectedIndent = currentIndentLevel + 2; // YAML typically uses 2-space indentation
+                if (lineIndent === expectedIndent && line.startsWith(yaml_key + ':')) {
+                    return i;
+                }
+                // If we've moved to a different section, reset
+                if (lineIndent <= currentIndentLevel) {
+                    pathIndex = 0;
+                    currentIndentLevel = 0;
+                }
+                continue;
+            }
+            
+            // Check if this line matches the current path segment
+            const currentPathSegment = yaml_path[pathIndex];
+            if (currentPathSegment && line.startsWith(currentPathSegment + ':')) {
+                // If this is at the expected indent level
+                if (lineIndent === currentIndentLevel) {
+                    pathIndex++;
+                    currentIndentLevel = lineIndent;
+                    
+                    // If we've completed the path, the next target should be at the next indent level
+                    if (pathIndex >= yaml_path.length) {
+                        currentIndentLevel += 2;
+                    }
+                }
+            }
+            // If we encounter a line at the same or less indentation, reset if we haven't found our path
+            else if (lineIndent <= currentIndentLevel && pathIndex < yaml_path.length) {
+                pathIndex = 0;
+                currentIndentLevel = 0;
+                
+                // Check if this line might be the start of our path
+                if (yaml_path.length > 0 && line.startsWith(yaml_path[0] + ':')) {
+                    pathIndex = 1;
+                    currentIndentLevel = lineIndent;
+                }
+            }
+        }
+        
+        return -1;
     }
     
     async shutdown() {

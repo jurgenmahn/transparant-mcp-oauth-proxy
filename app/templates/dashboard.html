@@ -94,11 +94,19 @@
         
         .section-content {
             padding: 20px;
-            display: none;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+            padding-top: 0;
+            padding-bottom: 0;
         }
         
         .section-content.expanded {
-            display: block;
+            max-height: 2000px;
+            opacity: 1;
+            padding-top: 20px;
+            padding-bottom: 20px;
         }
         
         .field-group {
@@ -584,33 +592,47 @@
         // Handle config save
         document.getElementById('config-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            console.log('📝 Form submission started...');
+            
             const formData = new FormData(e.target);
+            console.log('📋 Form data entries:', Array.from(formData.entries()).length);
             
             try {
+                console.log('🌐 Sending request to /dashboard/save-config...');
                 const response = await fetch('/dashboard/save-config', {
                     method: 'POST',
                     body: formData
                 });
                 
+                console.log(`📊 Response status: ${response.status}`);
+                
                 if (response.ok) {
                     const result = await response.json();
+                    console.log('✅ Save successful:', result);
+                    
                     document.getElementById('save-message').textContent = 'Configuration saved successfully!';
                     document.getElementById('save-message').style.display = 'block';
                     document.getElementById('save-error').style.display = 'none';
                     
                     // Check if any services need restart
                     if (result.servicesNeedingRestart && result.servicesNeedingRestart.length > 0) {
+                        console.log(`🔄 ${result.servicesNeedingRestart.length} services need restart`);
                         await handleServiceRestarts(result.servicesNeedingRestart);
+                    } else {
+                        console.log('ℹ️ No services need restart');
                     }
                 } else {
                     const error = await response.json();
+                    console.log('❌ Save failed:', error);
                     document.getElementById('save-error').textContent = error.error || 'Failed to save configuration';
                     document.getElementById('save-error').style.display = 'block';
                     document.getElementById('save-message').style.display = 'none';
                 }
             } catch (error) {
-                document.getElementById('save-error').textContent = 'Connection error';
+                console.error('💥 Form submission error:', error);
+                document.getElementById('save-error').textContent = 'Connection error: ' + error.message;
                 document.getElementById('save-error').style.display = 'block';
+                document.getElementById('save-message').style.display = 'none';
             }
         });
         
@@ -854,7 +876,8 @@
         // Collapsible section functionality
         function toggleSection(header) {
             const content = header.nextElementSibling;
-            const icon = header.querySelector('.toggle-icon');
+            
+            if (!content) return;
             
             if (content.classList.contains('expanded')) {
                 // Collapse
@@ -867,17 +890,36 @@
             }
         }
         
-        // Initialize collapsible sections
-        function initializeCollapsibleSections() {
-            const headers = document.querySelectorAll('.section-header');
-            headers.forEach(header => {
-                // Skip user management section - keep it always expanded
+        // Use event delegation for collapsible sections
+        document.addEventListener('click', function(e) {
+            // Check if clicked element is a section header
+            if (e.target.classList.contains('section-header') || e.target.closest('.section-header')) {
+                const header = e.target.classList.contains('section-header') ? e.target : e.target.closest('.section-header');
+                
+                // Skip user management section
                 if (header.textContent.trim() === 'Dashboard Users') {
-                    header.nextElementSibling.classList.add('expanded');
                     return;
                 }
                 
-                // Add toggle icon
+                e.preventDefault();
+                e.stopPropagation();
+                toggleSection(header);
+            }
+        });
+        
+        // Initialize collapsible sections
+        function initializeCollapsibleSections() {
+            const headers = document.querySelectorAll('.section-header');
+            
+            headers.forEach(header => {
+                // Skip user management section - keep it always expanded
+                if (header.textContent.trim() === 'Dashboard Users') {
+                    const content = header.nextElementSibling;
+                    if (content) content.classList.add('expanded');
+                    return;
+                }
+                
+                // Add toggle icon if not already present
                 if (!header.querySelector('.toggle-icon')) {
                     const icon = document.createElement('span');
                     icon.className = 'toggle-icon';
@@ -885,19 +927,25 @@
                     header.appendChild(icon);
                 }
                 
-                // Add click handler
+                // Set cursor
                 header.style.cursor = 'pointer';
-                header.addEventListener('click', () => toggleSection(header));
                 
                 // Set initial state (collapsed by default)
                 header.classList.add('collapsed');
-                header.nextElementSibling.classList.remove('expanded');
+                const content = header.nextElementSibling;
+                if (content) {
+                    content.classList.remove('expanded');
+                }
             });
         }
         
         // Handle service restart confirmations
         async function handleServiceRestarts(servicesNeedingRestart) {
+            console.log('🔄 handleServiceRestarts called with:', servicesNeedingRestart);
+            
             for (const service of servicesNeedingRestart) {
+                console.log(`🔧 Processing service: ${service.name}`);
+                
                 const isDashboardRestart = service.name === 'MCP Server configuration';
                 let confirmMessage = `Configuration changes detected for "${service.name}". ` +
                     `Would you like to restart this service to apply the changes?`;
@@ -907,8 +955,12 @@
                         'You will need to refresh this page after the restart.';
                 }
                 
+                console.log('❓ Showing confirmation dialog...');
                 if (confirm(confirmMessage)) {
+                    console.log('✅ User confirmed restart');
                     await restartService(service);
+                } else {
+                    console.log('❌ User declined restart');
                 }
             }
         }
@@ -948,14 +1000,15 @@
         // Initialize
         checkAuth();
         
-        // Initialize collapsible sections when DOM is ready
+        // Initialize collapsible sections when DOM is ready and after auth
         document.addEventListener('DOMContentLoaded', initializeCollapsibleSections);
         
         // Also initialize after auth check (when content is loaded)
         const originalCheckAuth = checkAuth;
         checkAuth = async function() {
             await originalCheckAuth();
-            setTimeout(initializeCollapsibleSections, 100);
+            // Wait a bit for the dashboard content to render
+            setTimeout(initializeCollapsibleSections, 300);
         };
     </script>
 </body>

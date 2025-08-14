@@ -23,6 +23,7 @@
     "express": "latest",
     "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
     "node-fetch": "latest",
     "redis": "^5.6.1",
     "undici": "latest",
