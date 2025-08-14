@@ -94,16 +94,23 @@ export class LauncherProxyService {
     }
 
     async initializeMCPServer() {
-
         // Parse services configuration
         this.services = await this.parseServices(this.config.mcp_services || []);
 
         const mcpServerNames = Object.keys(this.services).join(", ");
         console.log("MCP servers loaded from configuration: ", mcpServerNames);
 
-        console.log("🔧 Starting MCP Bridge services...");
-        // Start all backend services and register their tools
-        await this.startAllServices();
+        // Optional skip flag for faster debug cycles
+        const skip = !!(this.config?.server?.skip_mcp_server_loading === true || this.config?.server?.skip_mcp_server_loading === 'true');
+        this.skipMcpLoading = skip;
+
+        if (skip) {
+            console.log("⏭️  Skipping MCP service startup per config (server.skip_mcp_server_loading=true). Faking start for debugging.");
+        } else {
+            console.log("🔧 Starting MCP Bridge services...");
+            // Start all backend services and register their tools
+            await this.startAllServices();
+        }
 
         // Initialize the persistent MCP server and transport
         this.mcpServer = this.createServer();
@@ -939,12 +946,13 @@ export class LauncherProxyService {
         }
 
         this.cachedHealthStatus = {
-            status: 'healthy',
+            status: this.skipMcpLoading ? 'debug-skip' : 'healthy',
             totalTools: this.registeredTools.size,
             totalServices: this.processes.size,
             activeConnections: this.activeServers.size,
             services: services,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            skipMcpServerLoading: !!this.skipMcpLoading
         };
 
         this.lastHealthStatusUpdate = now;

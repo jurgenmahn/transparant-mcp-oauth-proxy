@@ -7,3 +7,11 @@
 /conf/usr/local/apisix/conf/config.yaml
 /conf/usr/local/apisix/conf/base-config.yaml
 **/node_modules/*
+debug-yaml-path.js
+test-fix.js
+app/server.log
+app/config/local.yaml.backup
+app/node_modules/@cyanheads/git-mcp-server/logs/combined.log
+app/node_modules/@cyanheads/git-mcp-server/logs/debug.log
+app/node_modules/@cyanheads/git-mcp-server/logs/info.log
+conf/etc/hydra/config.yaml.backup

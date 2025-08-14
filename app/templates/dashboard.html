@@ -103,8 +103,9 @@
         }
         
         .section-content.expanded {
-            max-height: 2000px;
+            max-height: 9999px;
             opacity: 1;
+            overflow: visible;
             padding-top: 20px;
             padding-bottom: 20px;
         }
@@ -124,7 +125,7 @@
         .field-group input,
         .field-group select,
         .field-group textarea {
-            width: 100%;
+            width: 90%;
             padding: 12px 16px;
             border: 2px solid #e1e5e9;
             border-radius: 8px;
@@ -159,6 +160,11 @@
             background: white;
             border-radius: 8px;
             position: relative;
+        }
+
+        .array-item:has(.sub-field) {
+        border: 2px double #000;
+        margin-top: 30px;
         }
         
         .sub-field {
@@ -202,11 +208,12 @@
         
         .remove-array-item {
             background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
-            position: absolute;
-            top: 10px;
+            /* position: absolute; */
+            /* top: 10px; */
             right: 10px;
             padding: 6px 12px;
             font-size: 12px;
+            margin-left: 8px;
         }
         
         .remove-array-item:hover {
@@ -251,6 +258,39 @@
             margin: 20px 0;
             border: 1px solid #9ae6b4;
         }
+
+        .version-badge {
+            background: #fff;
+            color: #2d3748;
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-size: 12px;
+            border: 1px solid rgba(255,255,255,0.5);
+            margin-right: 6px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-bottom: none;
+            padding: 10px 16px;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: white;
+            border-bottom: 1px solid white;
+            font-weight: 600;
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
         
         .error {
             background: #fee;
@@ -416,6 +456,13 @@
         .cancel-password-btn {
             background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
         }
+
+        /* Preview diff styles */
+        .diff-file { margin-bottom: 20px; }
+        .diff-header { font-weight: 600; margin-bottom: 8px; }
+        .diff-changes { font-size: 13px; color: #4a5568; margin-bottom: 10px; }
+        .diff-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .diff-col pre { background:#f8f9fa; border:1px solid #e2e8f0; border-radius:6px; padding:10px; max-height:300px; overflow:auto; }
     </style>
 </head>
 <body>
@@ -449,52 +496,71 @@
             <div class="dashboard-header">
                 <h1>MCP Configuration Dashboard</h1>
                 <div class="user-info">
+                    <span id="server-version" class="version-badge" title="Server version and start time">loading…</span>
+                    <button id="reload-config-btn" class="logout-btn" title="Restart all configured services">Reload Config</button>
                     <span id="current-user-email"></span>
                     <a href="#" id="logout-btn" class="logout-btn">Logout</a>
                 </div>
             </div>
             
             <div class="dashboard-content">
-                <!-- Configuration Form -->
-                <form id="config-form">
-                    {{FORM_CONTENT}}
-                    <button type="submit" class="submit-btn">Save Configuration</button>
+                <!-- Tabs Navigation -->
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="general">General</button>
+                    <button class="tab-btn" data-tab="mcp">MCP</button>
+                    <button class="tab-btn" data-tab="hydra">Hydra</button>
+                    <button class="tab-btn" data-tab="users">Dashboard Users</button>
+                </div>
+
+                <!-- Configuration Form across tabs (only config tabs inside the form) -->
+                <form id="config-form" novalidate>
+                    <div class="tab-pane active" id="tab-general">
+                        {{GENERAL_FORM}}
+                    </div>
+                    <div class="tab-pane" id="tab-mcp">
+                        {{MCP_FORM}}
+                    </div>
+                    <div class="tab-pane" id="tab-hydra">
+                        {{HYDRA_FORM}}
+                    </div>
+                    <div style="display:flex; gap:10px; justify-content:center; margin-top:20px;">
+                        <button type="button" id="preview-btn" class="logout-btn">Preview Changes</button>
+                        <button type="submit" class="submit-btn">Save Configuration</button>
+                    </div>
                 </form>
-                
-                <!-- Messages -->
-                <div id="save-message" class="success" style="display: none;"></div>
-                <div id="save-error" class="error" style="display: none;"></div>
-                
-                <!-- User Management Section -->
-                <div class="user-management">
-                    <div class="section">
-                        <div class="section-header">Dashboard Users</div>
-                        <div class="section-content">
-                            <div id="user-list" class="user-list">
-                                <!-- Users will be loaded here -->
-                            </div>
-                            
-                            <button type="button" id="add-user-btn" class="btn" style="margin-top: 15px;">Add New User</button>
-                            
-                            <div id="add-user-form" class="add-user-form" style="display: none;">
-                                <div class="form-row">
-                                    <div class="field-group">
-                                        <label for="new-user-email">Email</label>
-                                        <input type="email" id="new-user-email" required>
+
+                <!-- Users tab (outside the form to avoid validation conflicts) -->
+                <div class="tab-pane" id="tab-users">
+                    <div class="user-management">
+                        <div class="section">
+                            <div class="section-header">Dashboard Users</div>
+                            <div class="section-content expanded">
+                                <div id="user-list" class="user-list"></div>
+                                <button type="button" id="add-user-btn" class="btn" style="margin-top: 15px;">Add New User</button>
+                                <div id="add-user-form" class="add-user-form" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="field-group">
+                                            <label for="new-user-email">Email</label>
+                                            <input type="email" id="new-user-email" required>
+                                        </div>
+                                        <div class="field-group">
+                                            <label for="new-user-password">Password</label>
+                                            <input type="password" id="new-user-password" required>
+                                        </div>
                                     </div>
-                                    <div class="field-group">
-                                        <label for="new-user-password">Password</label>
-                                        <input type="password" id="new-user-password" required>
+                                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                                        <button type="button" id="save-new-user" class="btn">Save User</button>
+                                        <button type="button" id="cancel-new-user" class="logout-btn">Cancel</button>
                                     </div>
-                                </div>
-                                <div style="display: flex; gap: 10px; margin-top: 15px;">
-                                    <button type="button" id="save-new-user" class="btn">Save User</button>
-                                    <button type="button" id="cancel-new-user" class="logout-btn">Cancel</button>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
+
+                <!-- Messages -->
+                <div id="save-message" class="success" style="display: none;"></div>
+                <div id="save-error" class="error" style="display: none;"></div>
             </div>
         </div>
     </div>
@@ -523,6 +589,17 @@
                     </div>
                 </form>
             </div>
+        </div>
+    </div>
+    
+    <!-- Preview Changes Modal -->
+    <div id="preview-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <span class="close" id="preview-close">&times;</span>
+                <h2>Preview Changes</h2>
+            </div>
+            <div class="modal-body" id="preview-body"></div>
         </div>
     </div>
     
@@ -588,6 +665,74 @@
                 console.error('Logout error:', error);
             }
         });
+
+        // Load server version/timestamp badge
+        async function loadServerVersion() {
+            try {
+                const r = await fetch('/dashboard/api/version');
+                if (!r.ok) return;
+                const v = await r.json();
+                const el = document.getElementById('server-version');
+                if (el) {
+                    const started = v.serverStart ? new Date(v.serverStart).toLocaleString() : 'unknown';
+                    el.textContent = `v${v.appVersion || 'unknown'} • ${started}`;
+                    el.title = `Node ${v.node || ''} • uptime ${v.uptimeSec || 0}s` + (v.serviceMtime ? ` • svc ${v.serviceMtime}` : '') + (v.templateMtime ? ` • tpl ${v.templateMtime}` : '');
+                }
+            } catch {}
+        }
+        loadServerVersion();
+
+        // Preview changes
+        document.getElementById('preview-btn').addEventListener('click', async () => {
+            try {
+                const form = document.getElementById('config-form');
+                const formData = new FormData(form);
+                const resp = await fetch('/dashboard/api/preview-config', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(err.error || 'Failed to build preview');
+                    return;
+                }
+                const data = await resp.json();
+                renderPreviewModal(data);
+            } catch (err) {
+                alert('Connection error building preview');
+            }
+        });
+
+        // Handle reload all services
+        document.getElementById('reload-config-btn').addEventListener('click', async () => {
+            try {
+                const listResp = await fetch('/dashboard/api/services-with-restart');
+                if (!listResp.ok) {
+                    const err = await listResp.json().catch(() => ({}));
+                    alert(err.error || 'Failed to load services to restart');
+                    return;
+                }
+                const data = await listResp.json();
+                const services = Array.isArray(data.services) ? data.services : [];
+
+                if (services.length === 0) {
+                    alert('No services with restart_command found in dashboard.yaml');
+                    return;
+                }
+
+                const names = services.map(s => `• ${s.name}`).join('\n');
+                const proceed = confirm(`This will restart the following services:\n\n${names}\n\nContinue?`);
+                if (!proceed) return;
+
+                // Restart sequentially; dashboard/server restart goes last (API already sorts)
+                for (const svc of services) {
+                    await restartService(svc);
+                }
+            } catch (error) {
+                console.error('Reload all error:', error);
+                alert('Error while reloading services');
+            }
+        });
         
         // Handle config save
         document.getElementById('config-form').addEventListener('submit', async (e) => {
@@ -617,7 +762,7 @@
                     // Check if any services need restart
                     if (result.servicesNeedingRestart && result.servicesNeedingRestart.length > 0) {
                         console.log(`🔄 ${result.servicesNeedingRestart.length} services need restart`);
-                        await handleServiceRestarts(result.servicesNeedingRestart);
+                        await restartServicesSilently(result.servicesNeedingRestart);
                     } else {
                         console.log('ℹ️ No services need restart');
                     }
@@ -634,6 +779,21 @@
                 document.getElementById('save-error').style.display = 'block';
                 document.getElementById('save-message').style.display = 'none';
             }
+        });
+
+        // Tabs logic
+        function activateTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+            const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+            const pane = document.getElementById(`tab-${name}`);
+            if (btn && pane) {
+                btn.classList.add('active');
+                pane.classList.add('active');
+            }
+        }
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => activateTab(btn.dataset.tab));
         });
         
         // Load users
@@ -799,14 +959,27 @@
                 newItem.setAttribute('data-index', newIndex);
                 
                 newItem.querySelectorAll('input, textarea').forEach(input => {
-                    if (input.name.includes('][')) {
-                        const name = input.name.replace(/\\[\\d+\\]/, `[${newIndex}]`);
-                        input.name = name;
-                    } else {
-                        const name = input.name.replace(/\\[\\d+\\]/, `[${newIndex}]`);
-                        input.name = name;
+                    if (input.name) {
+                        input.name = input.name.replace(/\[\d+\]/, `[${newIndex}]`);
+                    }
+                    if (input.id) {
+                        input.id = input.id.replace(/\[\d+\]/, `[${newIndex}]`);
                     }
                     input.value = '';
+                    // Ensure disabled/password fields reset state
+                    if (input.type === 'password') {
+                        input.disabled = false;
+                        input.required = false;
+                        input.placeholder = '';
+                    }
+                });
+
+                // Update any inline onclick handlers that reference [index]
+                newItem.querySelectorAll('button').forEach(btn => {
+                    const oc = btn.getAttribute('onclick');
+                    if (oc) {
+                        btn.setAttribute('onclick', oc.replace(/\[\d+\]/, `[${newIndex}]`));
+                    }
                 });
                 
                 container.appendChild(newItem);
@@ -889,6 +1062,49 @@
                 header.classList.remove('collapsed');
             }
         }
+
+        // Preview modal helpers
+        function renderPreviewModal(data) {
+            const files = Array.isArray(data.files) ? data.files : [];
+            const body = document.getElementById('preview-body');
+            if (files.length === 0) {
+                body.innerHTML = '<p>No changes detected.</p>';
+            } else {
+                body.innerHTML = files.map(f => {
+                    const changeList = (f.changes || []).map(c => `• ${c.path}`).join('<br>');
+                    return `
+                        <div class="diff-file">
+                            <div class="diff-header">${f.filePath}</div>
+                            <div class="diff-changes">${changeList || 'No field-level changes detected'}</div>
+                            <div class="diff-container">
+                                <div class="diff-col"><div><strong>Before</strong></div><pre>${escapeHtml(f.originalText || '')}</pre></div>
+                                <div class="diff-col"><div><strong>After</strong></div><pre>${escapeHtml(f.newText || '')}</pre></div>
+                            </div>
+                        </div>`;
+                }).join('');
+            }
+            document.getElementById('preview-modal').style.display = 'block';
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, function (s) {
+                if (s === '&') return '&amp;';
+                if (s === '<') return '&lt;';
+                if (s === '>') return '&gt;';
+                if (s === '"') return '&quot;';
+                if (s === "'") return '&#39;';
+                return s;
+            });
+        }
+
+        document.getElementById('preview-close').addEventListener('click', () => {
+            document.getElementById('preview-modal').style.display = 'none';
+        });
+        window.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('preview-modal')) {
+                document.getElementById('preview-modal').style.display = 'none';
+            }
+        });
         
         // Use event delegation for collapsible sections
         document.addEventListener('click', function(e) {
@@ -907,18 +1123,10 @@
             }
         });
         
-        // Initialize collapsible sections
+        // Initialize collapsible sections: expand all except MCP tab
         function initializeCollapsibleSections() {
             const headers = document.querySelectorAll('.section-header');
-            
             headers.forEach(header => {
-                // Skip user management section - keep it always expanded
-                if (header.textContent.trim() === 'Dashboard Users') {
-                    const content = header.nextElementSibling;
-                    if (content) content.classList.add('expanded');
-                    return;
-                }
-                
                 // Add toggle icon if not already present
                 if (!header.querySelector('.toggle-icon')) {
                     const icon = document.createElement('span');
@@ -926,15 +1134,18 @@
                     icon.innerHTML = '▼';
                     header.appendChild(icon);
                 }
-                
                 // Set cursor
                 header.style.cursor = 'pointer';
-                
-                // Set initial state (collapsed by default)
-                header.classList.add('collapsed');
+                const inMcpTab = header.closest('#tab-mcp');
                 const content = header.nextElementSibling;
-                if (content) {
-                    content.classList.remove('expanded');
+                if (inMcpTab) {
+                    // Collapse MCP sections by default
+                    header.classList.add('collapsed');
+                    if (content) content.classList.remove('expanded');
+                } else {
+                    // Expand others by default
+                    header.classList.remove('collapsed');
+                    if (content) content.classList.add('expanded');
                 }
             });
         }
@@ -994,6 +1205,35 @@
                 }
             } catch (error) {
                 alert(`Connection error while restarting ${service.name}`);
+            }
+        }
+
+        // Silently restart services after save (no confirmation prompts)
+        async function restartServicesSilently(services) {
+            for (const service of services) {
+                try {
+                    const response = await fetch('/dashboard/api/restart-service', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            serviceName: service.name,
+                            restartCommand: service.restartCommand
+                        })
+                    });
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log(`✅ Restarted ${service.name}`);
+                        if (result.isDashboardRestart) {
+                            console.log('🔁 Dashboard restarting in 5s...');
+                            setTimeout(() => window.location.reload(), 5000);
+                        }
+                    } else {
+                        const err = await response.json().catch(() => ({}));
+                        console.warn(`⚠️ Failed to restart ${service.name}:`, err.error || 'unknown');
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ Restart error for ${service.name}`, e);
+                }
             }
         }
         

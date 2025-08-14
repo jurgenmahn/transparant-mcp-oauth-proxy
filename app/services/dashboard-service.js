@@ -20,6 +20,8 @@ export class DashboardService {
         this.setupHashGenerationRoute();
         this.setupUserRoutes();
         this.setupRestartRoutes();
+        this.setupPreviewRoute();
+        this.setupVersionRoute();
     }
     
     setupSession() {
@@ -57,10 +59,12 @@ export class DashboardService {
         this.router.get('/', async (req, res) => {
             try {
                 const values = await this.loadCurrentValues();
-                const formContent = this.generateFormContent(values);
+                const { generalHtml, mcpHtml, hydraHtml } = this.generateTabbedContents(values);
                 const templatePath = path.join(process.cwd(), 'templates', 'dashboard.html');
                 let html = await fs.readFile(templatePath, 'utf8');
-                html = html.replace('{{FORM_CONTENT}}', formContent);
+                html = html.replace('{{GENERAL_FORM}}', generalHtml);
+                html = html.replace('{{MCP_FORM}}', mcpHtml);
+                html = html.replace('{{HYDRA_FORM}}', hydraHtml);
                 res.send(html);
             } catch (error) {
                 console.error('Error generating dashboard:', error);
@@ -145,7 +149,9 @@ export class DashboardService {
                 res.json(response);
             } catch (error) {
                 console.error('❌ Error saving configuration:', error);
-                res.status(500).json({ success: false, error: 'Failed to save configuration', debug: { error: error.message } });
+                // Surface validation errors clearly to the client
+                const message = error?.message || 'Failed to save configuration';
+                res.status(400).json({ success: false, error: message, debug: { error: error.message } });
             }
         });
         
@@ -160,11 +166,15 @@ export class DashboardService {
             }
         });
         
-        // Debug endpoint to see extracted fields
+        // Debug endpoint to see extracted fields per configured file
         this.router.get('/api/debug', this.requireAuth.bind(this), async (req, res) => {
             try {
-                const fields = await this.extractFieldDefinitions('/home/jurgen/sites/create_all_containers/mcp-launcher/app/config/local.yaml');
-                res.json({ fields, count: fields.length });
+                const result = [];
+                for (const file of (this.config?.dashboard?.configs?.files || [])) {
+                    const fields = await this.extractFieldDefinitions(file.location);
+                    result.push({ file: file.name, location: file.location, fields, count: fields.length });
+                }
+                res.json(result);
             } catch (error) {
                 console.error('Error in debug:', error);
                 res.status(500).json({ error: error.message });
@@ -248,7 +258,7 @@ export class DashboardService {
         return field;
     }
     
-    // Extract comment-based field definitions from config files
+    // Extract field definitions for a file. Prefer dashboard.yaml > fallback to comment parsing
     async extractFieldDefinitions(filePath) {
         try {
             const content = await fs.readFile(filePath, 'utf8');
@@ -256,22 +266,62 @@ export class DashboardService {
             // Parse the entire file as YAML first to get the actual values
             const yamlData = yaml.parse(content);
             
-            // Now extract the fields using a simple approach
+            // 1) Prefer explicit field definitions from dashboard.yaml (if present)
+            const fileCfg = (this.config?.dashboard?.configs?.files || []).find(f => f.location === filePath);
+            if (fileCfg && Array.isArray(fileCfg.editable_fields)) {
+                return this.buildFieldsFromDashboardConfig(fileCfg.editable_fields, yamlData);
+            }
+
+            // 2) Fallback to legacy comment-based extraction in target YAML
             const fields = [];
             const dashboardBlocks = this.findDashboardBlocks(content);
-            
             for (const block of dashboardBlocks) {
                 const field = this.parseFieldFromBlock(block, yamlData);
-                if (field) {
-                    fields.push(field);
-                }
+                if (field) fields.push(field);
             }
-            
             return fields;
         } catch (error) {
             console.error(`Error reading file ${filePath}:`, error);
             return [];
         }
+    }
+
+    // Build field definitions from dashboard.yaml editable_fields array
+    buildFieldsFromDashboardConfig(editableFields, yamlData) {
+        const fields = [];
+        for (const spec of editableFields) {
+            if (!spec || !spec.field) continue;
+            const pathSegments = String(spec.field).split('/').filter(Boolean);
+            const yaml_key = pathSegments[pathSegments.length - 1];
+            const yaml_path = pathSegments.slice(0, -1);
+
+            const field = {
+                yaml_key,
+                yaml_path,
+                friendly_name: spec.friendly_name || yaml_key,
+                field_type: spec.field_type || 'textbox',
+                mandatory: !!spec.mandatory,
+                allowed_values: this.normalizeAllowedValues(spec.allowed_values),
+                validation: spec.validation ?? null,
+                length: spec.length ?? null,
+                help: spec.help ?? null,
+                prepend: spec.prepend ?? null,
+                append: spec.append ?? null,
+                sub_fields: Array.isArray(spec.sub_fields) ? spec.sub_fields : []
+            };
+
+            field.current_value = this.getValueFromYamlPath(yamlData, yaml_path, yaml_key);
+            fields.push(field);
+        }
+        return fields;
+    }
+
+    normalizeAllowedValues(values) {
+        if (!values || values === 'null') return null;
+        if (Array.isArray(values)) return values;
+        // Allow comma-separated string
+        if (typeof values === 'string') return values.split(',').map(v => v.trim()).filter(Boolean);
+        return null;
     }
     
     // Find all DASHBOARD comment blocks
@@ -626,6 +676,76 @@ export class DashboardService {
         
         return formHtml;
     }
+
+    // Build tab-specific contents for General, MCP and Hydra
+    generateTabbedContents(values) {
+        // Group values by file for easy processing
+        const sections = {};
+        Object.entries(values).forEach(([, data]) => {
+            if (!sections[data.file]) sections[data.file] = [];
+            sections[data.file].push(data);
+        });
+
+        // Compute general fields (friendly names appearing in multiple files)
+        const fieldCounts = {};
+        Object.values(values).forEach(data => {
+            const friendlyName = data.field.friendly_name;
+            if (friendlyName && friendlyName.trim() !== '') {
+                fieldCounts[friendlyName] = (fieldCounts[friendlyName] || 0) + 1;
+            }
+        });
+        const generalFields = Object.keys(fieldCounts).filter(name => fieldCounts[name] > 1);
+
+        // General HTML
+        let generalHtml = '';
+        if (generalFields.length > 0) {
+            generalHtml += `
+                <div class="section general-section">
+                    <div class="section-header">General Settings</div>
+                    <div class="section-content expanded">
+            `;
+            generalFields.forEach(friendlyName => {
+                const firstData = Object.values(values).find(data => data.field.friendly_name === friendlyName);
+                generalHtml += this.generateFieldHtml(`general::${friendlyName}`, firstData);
+            });
+            generalHtml += '</div></div>';
+        } else {
+            generalHtml += `
+                <div class="section general-section">
+                    <div class="section-header">General Settings</div>
+                    <div class="section-content expanded">
+                        <div class="field-group"><em>No general fields detected.</em></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Helper to render a file-based section excluding general fields
+        const renderFileSection = (fileName) => {
+            const items = (sections[fileName] || []).filter(data => !generalFields.includes(data.field.friendly_name));
+            let html = '';
+            html += `
+                <div class="section">
+                    <div class="section-header">${fileName}</div>
+                    <div class="section-content expanded">
+            `;
+            items.forEach(data => {
+                const fieldKey = Object.keys(values).find(key => values[key] === data);
+                html += this.generateFieldHtml(fieldKey, data);
+            });
+            html += '</div></div>';
+            return html;
+        };
+
+        // Determine canonical file names from dashboard.yaml
+        const mcpFileName = (this.config?.dashboard?.configs?.files || []).find(f => f.location?.includes('local.yaml'))?.name || 'MCP Server configuration';
+        const hydraFileName = (this.config?.dashboard?.configs?.files || []).find(f => f.location?.includes('/hydra/'))?.name || 'Hydra configuration';
+
+        const mcpHtml = renderFileSection(mcpFileName);
+        const hydraHtml = renderFileSection(hydraFileName);
+
+        return { generalHtml, mcpHtml, hydraHtml };
+    }
     
     // Generate HTML for individual field
     generateFieldHtml(fieldKey, data) {
@@ -669,7 +789,7 @@ export class DashboardService {
                 case 'dropdown':
                     // Dropdown should have allowed_values, fallback to textbox
                     fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${this.getDisplayValue(currentValue, field)}"`;
-                    if (field.validation) fieldHtml += ` pattern="${field.validation}"`;
+                    if (field.validation) fieldHtml += ` pattern="${this.sanitizeHtmlPattern(field.validation)}"`;
                     if (field.mandatory) fieldHtml += ' required';
                     fieldHtml += '>';
                     break;
@@ -707,7 +827,7 @@ export class DashboardService {
                 case 'textbox':
                 default:
                     fieldHtml += `<input type="text" name="${fieldKey}" id="${fieldKey}" value="${this.getDisplayValue(currentValue, field)}"`;
-                    if (field.validation) fieldHtml += ` pattern="${field.validation}"`;
+                    if (field.validation) fieldHtml += ` pattern="${this.sanitizeHtmlPattern(field.validation)}"`;
                     if (field.mandatory) fieldHtml += ' required';
                     fieldHtml += '>';
                     break;
@@ -769,9 +889,9 @@ export class DashboardService {
                     html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" placeholder="Enter value">`;
                     break;
                 case 'hash':
-                    html += `<div class="hash-field">`;
-                    html += `<input type="text" name="${fieldKey}[${index}]" value="${value || ''}" readonly>`;
-                    html += `<button type="button" onclick="generateHash('${fieldKey}[${index}]', 32)">Generate</button>`;
+                    html += `<div class=\"hash-field\">`;
+                    html += `<input type=\"text\" name=\"${fieldKey}[${index}]\" id=\"${fieldKey}[${index}]\" value=\"${value || ''}\" readonly>`;
+                    html += `<button type=\"button\" onclick=\"generateHash('${fieldKey}[${index}]', 32)\">Generate</button>`;
                     html += `</div>`;
                     break;
                 case 'multiline':
@@ -854,7 +974,7 @@ export class DashboardService {
                 case 'textbox':
                     html += `<input type="text" name="${subFieldKey}" value="${subValue}"`;
                     if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].validation) {
-                        html += ` pattern="${field.sub_fields[subIndex].validation}"`;
+                        html += ` pattern="${this.sanitizeHtmlPattern(field.sub_fields[subIndex].validation)}"`;
                     }
                     if (field.sub_fields && field.sub_fields[subIndex] && field.sub_fields[subIndex].mandatory) {
                         html += ' required';
@@ -941,22 +1061,41 @@ export class DashboardService {
             processedFields: []
         };
         
-        Object.entries(formData).forEach(([fieldKey, value]) => {
-            const valuePreview = typeof value === 'string' 
-                ? (value.length > 30 ? value.substring(0, 30) + '...' : value)
-                : (typeof value === 'object' ? JSON.stringify(value) : String(value));
-            console.log(`🔍 Processing form field: "${fieldKey}" = "${valuePreview}"`);
-            debugInfo.processedFields.push({ fieldKey, valuePreview });
-            
+        // Aggregate bracketed array inputs under their base key so arrays (e.g., mcp_services options/install) are captured
+        const aggregated = new Map();
+        Object.entries(formData).forEach(([rawKey, val]) => {
+            const baseKey = rawKey.replace(/\[.*$/, '');
+            const bracket = rawKey.startsWith(baseKey) ? rawKey.substring(baseKey.length) : '';
+            if (!aggregated.has(baseKey)) aggregated.set(baseKey, { scalar: undefined, map: {} });
+            if (bracket) {
+                aggregated.get(baseKey).map[bracket] = val;
+            } else {
+                aggregated.get(baseKey).scalar = val;
+            }
+            let valuePreview;
+            if (typeof val === 'string') {
+                valuePreview = val.length > 30 ? val.substring(0, 30) + '...' : val;
+            } else {
+                try {
+                    valuePreview = JSON.stringify(val);
+                    if (valuePreview && valuePreview.length > 50) valuePreview = valuePreview.substring(0, 50) + '...';
+                } catch {
+                    valuePreview = Object.prototype.toString.call(val);
+                }
+            }
+            debugInfo.processedFields.push({ fieldKey: rawKey, valuePreview });
+        });
+
+        // Now process aggregated fields
+        for (const [fieldKey, agg] of aggregated.entries()) {
+            const hasArrayParts = Object.keys(agg.map).length > 0;
+            const value = hasArrayParts ? agg.map : agg.scalar;
+
             if (fieldKey.startsWith('general::')) {
-                // Apply general fields to all files that have them
                 const generalFieldName = fieldKey.split('::')[1];
-                console.log(`📢 General field detected: "${generalFieldName}"`);
-                
                 let matchingFields = 0;
                 Object.values(values).forEach(data => {
                     if (data.field.friendly_name === generalFieldName) {
-                        console.log(`  ✅ Found matching field in ${data.filePath}: ${data.field.yaml_key}`);
                         if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
                         fileUpdates[data.filePath].push({ field: data.field, value });
                         matchingFields++;
@@ -965,18 +1104,14 @@ export class DashboardService {
                             yamlKey: data.field.yaml_key,
                             yamlPath: data.field.yaml_path,
                             friendlyName: data.field.friendly_name,
-                            newValue: value,
+                            newValue: hasArrayParts ? '[array]' : value,
                             source: 'general'
                         });
                     }
                 });
-                console.log(`  📊 Total matching fields for "${generalFieldName}": ${matchingFields}`);
             } else {
-                // File-specific field - but check if there are multiple fields with same friendly_name
                 const data = values[fieldKey];
                 if (data) {
-                    console.log(`  ✅ Found specific field: ${data.field.yaml_key} in ${data.filePath}`);
-                    // Add the primary field
                     if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
                     fileUpdates[data.filePath].push({ field: data.field, value });
                     debugInfo.fieldsUpdated.push({
@@ -984,37 +1119,31 @@ export class DashboardService {
                         yamlKey: data.field.yaml_key,
                         yamlPath: data.field.yaml_path,
                         friendlyName: data.field.friendly_name,
-                        newValue: value,
+                        newValue: hasArrayParts ? '[array]' : value,
                         source: 'specific'
                     });
-                    
-                    // Also check for other fields with the same friendly_name in ALL files (including same file)
+
+                    // Sync same friendly_name to other files
                     const friendlyName = data.field.friendly_name;
-                    let syncedFields = 0;
                     Object.entries(values).forEach(([otherFieldKey, otherData]) => {
-                        if (otherFieldKey !== fieldKey && 
-                            otherData.field.friendly_name === friendlyName) {
-                            // Found another field with same friendly_name
-                            console.log(`  🔗 Syncing to: ${otherData.field.yaml_key} in ${otherData.filePath}`);
+                        if (otherFieldKey !== fieldKey && otherData.field.friendly_name === friendlyName) {
                             if (!fileUpdates[otherData.filePath]) fileUpdates[otherData.filePath] = [];
                             fileUpdates[otherData.filePath].push({ field: otherData.field, value });
-                            syncedFields++;
                             debugInfo.fieldsUpdated.push({
                                 file: otherData.filePath,
                                 yamlKey: otherData.field.yaml_key,
                                 yamlPath: otherData.field.yaml_path,
                                 friendlyName: otherData.field.friendly_name,
-                                newValue: value,
+                                newValue: hasArrayParts ? '[array]' : value,
                                 source: 'synced'
                             });
                         }
                     });
-                    console.log(`  📊 Synced to ${syncedFields} additional fields`);
                 } else {
                     console.log(`  ❌ Field not found in values: ${fieldKey}`);
                 }
             }
-        });
+        }
         
         console.log(`📊 File updates summary:`);
         Object.entries(fileUpdates).forEach(([filePath, updates]) => {
@@ -1025,6 +1154,43 @@ export class DashboardService {
                 console.log(`    - ${update.field.yaml_key} (${pathStr}) = "${valueStr}"`);
             });
         });
+
+        // Validation/guard: Prevent wiping arrays to empty when form posts nothing
+        for (const [filePath, updates] of Object.entries(fileUpdates)) {
+            // Load current YAML for this file once if needed
+            let currentYaml = null;
+            const filteredUpdates = [];
+            for (const update of updates) {
+                const isArrayField = update.field && typeof update.field.field_type === 'string' && update.field.field_type.startsWith('array[');
+                if (isArrayField) {
+                    const processed = this.processArrayValue(update.field, update.value);
+                    if (!processed || processed.length === 0) {
+                        if (!currentYaml) {
+                            try {
+                                const raw = await fs.readFile(filePath, 'utf8');
+                                currentYaml = yaml.parse(raw);
+                            } catch (e) {
+                                currentYaml = {};
+                            }
+                        }
+                        const existing = this.getValueFromYamlPath(currentYaml, update.field.yaml_path, update.field.yaml_key);
+                        const hasExisting = Array.isArray(existing) && existing.length > 0;
+                        if (hasExisting) {
+                            // Skip setting this array to empty; keep current YAML as-is
+                            // (including users: preserve existing users when form posts none)
+                            continue;
+                        } else {
+                            // No existing items and processed is empty
+                            if (update.field.yaml_key === 'users') {
+                                throw new Error('At least one MCP user is required');
+                            }
+                        }
+                    }
+                }
+                filteredUpdates.push(update);
+            }
+            fileUpdates[filePath] = filteredUpdates;
+        }
         
         // Update each file and track which services need restart
         const servicesNeedingRestart = [];
@@ -1058,93 +1224,122 @@ export class DashboardService {
         return { servicesNeedingRestart, ...debugInfo };
     }
     
-    // Update config file with new values
+    // Update config file with new values (object-based, safe, with backup)
     async updateConfigFile(filePath, updates) {
         console.log(`📝 Updating file: ${filePath} with ${updates.length} updates`);
-        const content = await fs.readFile(filePath, 'utf8');
-        const lines = content.split('\n');
-        
+
+        // Read and parse current YAML
+        const originalText = await fs.readFile(filePath, 'utf8');
+        let yamlObj;
+        try {
+            yamlObj = yaml.parse(originalText) || {};
+        } catch (e) {
+            console.error(`❌ Failed to parse YAML before update for ${filePath}:`, e);
+            throw new Error(`Invalid YAML in ${filePath}; aborting update`);
+        }
+
+        // Apply updates in-memory and track if anything actually changed
+        let anyChange = false;
         for (const update of updates) {
             const { field, value } = update;
-            const pathStr = Array.isArray(field.yaml_path) ? field.yaml_path.join(', ') : 'none';
-            const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-            console.log(`  🔧 Updating field: ${field.yaml_key} (path: [${pathStr}]) = "${valueStr}"`);
-            
+            const pathStr = Array.isArray(field.yaml_path) ? field.yaml_path.join('.') : '';
+            console.log(`  🔧 Updating field: ${pathStr ? pathStr + '.' : ''}${field.yaml_key}`);
+
             let processedValue = await this.processFieldValue(field, value);
-            console.log(`  🔀 Processed value:`, typeof processedValue === 'object' ? JSON.stringify(processedValue) : `"${processedValue}"`);
-            
+
             // Skip updating field if processedValue is null (e.g., empty password = don't change)
             if (processedValue === null && field.field_type === 'password') {
                 console.log(`  ⏭️  Skipping password field with null value`);
                 continue;
             }
-            
-            // Find the line with this field (simple approach)
-            let foundMatch = false;
-            for (let i = 0; i < lines.length; i++) {
-                const match = lines[i].match(new RegExp(`^(\\s*)${field.yaml_key}:\\s*(.*)$`));
-                if (match) {
-                    foundMatch = true;
-                    const indent = match[1];
-                    const oldValue = match[2];
-                    console.log(`    ✅ Matched line ${i + 1}: "${lines[i].trim()}" → updating value from "${oldValue}" to`, typeof processedValue === 'object' ? JSON.stringify(processedValue) : `"${processedValue}"`);
-                    
-                    if (field.field_type && field.field_type.startsWith('array[')) {
-                        // Handle array fields
-                        lines[i] = `${indent}${field.yaml_key}:`;
-                        
-                        // Remove existing array items
-                        let j = i + 1;
-                        while (j < lines.length && 
-                               (lines[j].trim() === '' || 
-                                lines[j].trim().startsWith('#') || 
-                                lines[j].match(/^\s*-\s/) ||
-                                (lines[j].match(/^\s+\w+:/) && lines[j].search(/\S/) > indent.length))) {
-                            lines.splice(j, 1);
-                        }
-                        
-                        // Add new array items
-                        if (Array.isArray(processedValue)) {
-                            const arrayLines = this.formatArrayValue(processedValue, field, indent + '  ');
-                            lines.splice(i + 1, 0, ...arrayLines);
-                        }
-                    } else if (field.field_type === 'multiline') {
-                        // Handle multiline fields
-                        lines[i] = `${indent}${field.yaml_key}: |`;
-                        
-                        // Remove existing multiline content
-                        let j = i + 1;
-                        while (j < lines.length && lines[j].search(/\S/) > indent.length) {
-                            lines.splice(j, 1);
-                        }
-                        
-                        // Add new multiline content
-                        if (processedValue) {
-                            const multilineLines = processedValue.split('\n').map(line => `${indent}  ${line}`);
-                            lines.splice(i + 1, 0, ...multilineLines);
-                        }
-                    } else {
-                        // Handle simple fields
-                        let finalValue = typeof processedValue === 'object' ? JSON.stringify(processedValue) : String(processedValue);
-                        if (field.prepend) finalValue = field.prepend + finalValue;
-                        if (field.append) finalValue = finalValue + field.append;
-                        lines[i] = `${indent}${field.yaml_key}: ${finalValue}`;
-                        console.log(`    💾 Updated line ${i + 1}: "${lines[i].trim()}"`);
-                    }
-                    break;
-                }
+
+            // Compute final value
+            const finalValue = this.computeFinalValueFromField(field, processedValue);
+
+            // Compare with current value; if equal, skip to preserve file formatting/comments
+            const currentVal = this.getValueFromYamlPath(yamlObj, field.yaml_path || [], field.yaml_key);
+            const isMcpServices = field.yaml_key === 'mcp_services';
+            const equal = isMcpServices ? false : this.deepEqualYaml(currentVal, finalValue);
+            if (equal) {
+                console.log('  ⏭️  No change detected; skipping write for this field');
+                continue;
             }
-            
-            if (!foundMatch) {
-                const pathStr = Array.isArray(field.yaml_path) ? field.yaml_path.join(', ') : 'none';
-                console.warn(`Field ${field.yaml_key} not found in ${filePath} with path [${pathStr}]`);
+            const updated = this.setValueAtPath(yamlObj, field.yaml_path || [], field.yaml_key, finalValue);
+            if (!updated) {
+                console.warn(`  ⚠️  Skipped update: Path/key not found for ${pathStr ? pathStr + '.' : ''}${field.yaml_key}`);
+            } else {
+                anyChange = true;
             }
         }
-        
-        // Write updated content back to file
-        console.log(`💾 Writing updated content to: ${filePath}`);
-        await fs.writeFile(filePath, lines.join('\n'), 'utf8');
+
+        if (!anyChange) {
+            console.log('ℹ️ No actual changes detected; file will not be rewritten');
+            return;
+        }
+
+        // Backup original file
+        const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+        const backupPath = `${filePath}.bak.${ts}`;
+        await fs.writeFile(backupPath, originalText, 'utf8');
+
+        // Serialize and write
+        const newText = yaml.stringify(yamlObj);
+        await fs.writeFile(filePath, newText, 'utf8');
+
+        // Validate written YAML by parsing again
+        try {
+            yaml.parse(await fs.readFile(filePath, 'utf8'));
+        } catch (e) {
+            console.error(`❌ YAML validation failed after write for ${filePath}, restoring backup:`, e);
+            await fs.writeFile(filePath, originalText, 'utf8');
+            throw new Error(`Failed to write valid YAML to ${filePath}; restored previous version`);
+        }
+
         console.log(`✅ File written successfully: ${filePath}`);
+    }
+
+    // Helper: produce final persisted value
+    computeFinalValueFromField(field, processedValue) {
+        if (field.field_type && field.field_type.startsWith('array[')) {
+            return processedValue;
+        }
+        if (field.field_type === 'multiline') {
+            return typeof processedValue === 'string' ? processedValue : String(processedValue ?? '');
+        }
+        let asString = typeof processedValue === 'object' ? JSON.stringify(processedValue) : String(processedValue ?? '');
+        if (field.prepend) asString = field.prepend + asString;
+        if (field.append) asString = asString + field.append;
+        return asString;
+    }
+
+    // Helper: shallow/deep compare for YAML values (arrays/objects/strings/numbers)
+    deepEqualYaml(a, b) {
+        if (a === b) return true;
+        if (typeof a !== typeof b) return false;
+        if (a && b && typeof a === 'object') {
+            try {
+                return JSON.stringify(a) === JSON.stringify(b);
+            } catch {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Helper: Set value at yaml_path + key safely; returns true if updated
+    setValueAtPath(obj, pathArr, key, value) {
+        let current = obj;
+        for (const segment of pathArr) {
+            if (!current || typeof current !== 'object' || !(segment in current)) {
+                return false; // Do not create missing paths; skip update
+            }
+            current = current[segment];
+        }
+        if (!current || typeof current !== 'object' || !(key in current)) {
+            return false; // Only update existing editable fields
+        }
+        current[key] = value;
+        return true;
     }
     
     // Process field value based on field type
@@ -1189,30 +1384,43 @@ export class DashboardService {
                 return { type: parts[0], name: parts[1] || parts[0] };
             });
             
-            // Group form data by array index
+            // Group form data by array index; support nested array subfields, e.g. [0][options][1]
             const itemsByIndex = {};
             Object.entries(value).forEach(([key, val]) => {
-                const match = key.match(/\[(\d+)\]\[(.+)\]$/);
-                if (match) {
-                    const index = parseInt(match[1]);
-                    const subField = match[2];
-                    if (!itemsByIndex[index]) itemsByIndex[index] = {};
-                    itemsByIndex[index][subField] = val;
+                const match = key.match(/^\[(\d+)\]\[([^\]]+)\](?:\[(\d+)\])?$/);
+                if (!match) return;
+                const index = parseInt(match[1]);
+                const subField = match[2];
+                const innerIdx = match[3];
+                if (!itemsByIndex[index]) itemsByIndex[index] = {};
+                if (innerIdx !== undefined) {
+                    if (!itemsByIndex[index][subField]) itemsByIndex[index][subField] = [];
+                    if (typeof val === 'string' && val.trim() !== '') {
+                        itemsByIndex[index][subField].push(val);
+                    }
+                } else {
+                    if (val !== undefined && String(val).trim() !== '') {
+                        itemsByIndex[index][subField] = val;
+                    }
                 }
             });
             
             // Process each complex array item
-            Object.values(itemsByIndex).forEach(item => {
+            Object.keys(itemsByIndex).sort((a,b)=>Number(a)-Number(b)).forEach(idx => {
+                const item = itemsByIndex[idx];
                 const obj = {};
                 subTypes.forEach(subType => {
-                    const val = item[subType.name];
-                    if (val !== undefined && val !== '') {
-                        obj[subType.name] = val;
+                    const key = subType.name;
+                    const val = item[key];
+                    if (subType.type && subType.type.startsWith('array[')) {
+                        if (Array.isArray(val)) {
+                            obj[key] = val;
+                        }
+                    } else if (val !== undefined && val !== '') {
+                        obj[key] = val;
                     }
                 });
-                if (Object.keys(obj).length > 0) {
-                    result.push(obj);
-                }
+                if (Object.keys(obj).length > 0) result.push(obj);
             });
         } else {
             // Simple array
@@ -1439,6 +1647,143 @@ export class DashboardService {
                 res.status(500).json({ error: 'Failed to get restart status' });
             }
         });
+
+        // List all services from dashboard.yaml that have a restart_command
+        this.router.get('/api/services-with-restart', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                // Always reload dashboard config to reflect latest changes
+                await this.loadDashboardConfig();
+
+                const files = (this.config?.dashboard?.configs?.files || []);
+                const services = files
+                    .filter(f => !!f.restart_command && !!f.name)
+                    .map(f => ({ name: f.name, restartCommand: f.restart_command }))
+                    // Ensure dashboard/server restart goes last to avoid interrupting others
+                    .sort((a, b) => {
+                        const isDashA = a.name === 'MCP Server configuration';
+                        const isDashB = b.name === 'MCP Server configuration';
+                        return (isDashA === isDashB) ? 0 : (isDashA ? 1 : -1);
+                    });
+
+                res.json({ services });
+            } catch (error) {
+                console.error('Error listing services with restart:', error);
+                res.status(500).json({ error: 'Failed to list services' });
+            }
+        });
+    }
+
+    // Preview config changes without writing to disk
+    setupPreviewRoute() {
+        this.router.post('/api/preview-config', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const values = await this.loadCurrentValues();
+
+                // Build fileUpdates similar to saveConfiguration
+                const fileUpdates = {};
+                Object.entries(req.body).forEach(([fieldKey, value]) => {
+                    if (fieldKey.startsWith('general::')) {
+                        const generalFieldName = fieldKey.split('::')[1];
+                        Object.values(values).forEach(data => {
+                            if (data.field.friendly_name === generalFieldName) {
+                                if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
+                                fileUpdates[data.filePath].push({ field: data.field, value });
+                            }
+                        });
+                    } else {
+                        const data = values[fieldKey];
+                        if (data) {
+                            if (!fileUpdates[data.filePath]) fileUpdates[data.filePath] = [];
+                            fileUpdates[data.filePath].push({ field: data.field, value });
+                            // sync to other same friendly_name fields
+                            const friendlyName = data.field.friendly_name;
+                            Object.entries(values).forEach(([otherKey, otherData]) => {
+                                if (otherKey !== fieldKey && otherData.field.friendly_name === friendlyName) {
+                                    if (!fileUpdates[otherData.filePath]) fileUpdates[otherData.filePath] = [];
+                                    fileUpdates[otherData.filePath].push({ field: otherData.field, value });
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Build preview payload per file
+                const files = [];
+                for (const [filePath, updates] of Object.entries(fileUpdates)) {
+                    const originalText = await fs.readFile(filePath, 'utf8');
+                    let yamlObj;
+                    try {
+                        yamlObj = yaml.parse(originalText) || {};
+                    } catch (e) {
+                        return res.status(400).json({ error: `Invalid YAML in ${filePath}: ${e.message}` });
+                    }
+
+                    const changes = [];
+                    for (const update of updates) {
+                        const processedValue = await this.processFieldValue(update.field, update.value);
+                        if (processedValue === null && update.field.field_type === 'password') continue;
+                        const finalValue = this.computeFinalValueFromField(update.field, processedValue);
+                        const currentVal = this.getValueFromYamlPath(yamlObj, update.field.yaml_path || [], update.field.yaml_key);
+                        if (!this.deepEqualYaml(currentVal, finalValue)) {
+                            changes.push({
+                                path: `${(update.field.yaml_path || []).join('.')}.${update.field.yaml_key}`.replace(/^\./, ''),
+                                before: currentVal,
+                                after: finalValue
+                            });
+                            // Apply to a copy so newText reflects the change for this preview
+                            this.setValueAtPath(yamlObj, update.field.yaml_path || [], update.field.yaml_key, finalValue);
+                        }
+                    }
+
+                    const newText = yaml.stringify(yamlObj);
+                    files.push({ filePath, changes, originalText, newText });
+                }
+
+                res.json({ files });
+            } catch (error) {
+                console.error('Error building preview:', error);
+                res.status(500).json({ error: 'Failed to build preview' });
+            }
+        });
+    }
+
+    // Version/timestamp endpoint for UI to verify fresh server
+    setupVersionRoute() {
+        this.router.get('/api/version', async (_req, res) => {
+            try {
+                const serverStart = new Date(Date.now() - Math.floor(process.uptime() * 1000)).toISOString();
+                // Try to read package version
+                let appVersion = 'unknown';
+                try {
+                    const pkgPath = path.resolve(this.appPath, 'package.json');
+                    const pkgRaw = await fs.readFile(pkgPath, 'utf8');
+                    appVersion = JSON.parse(pkgRaw)?.version || 'unknown';
+                } catch {}
+
+                // Include useful file mtimes to help spot stale deployments
+                let templateMtime = null;
+                let serviceMtime = null;
+                try {
+                    const t = await fs.stat(path.join(process.cwd(), 'templates', 'dashboard.html'));
+                    templateMtime = t.mtime.toISOString();
+                } catch {}
+                try {
+                    const s = await fs.stat(path.join(this.appPath, 'services', 'dashboard-service.js'));
+                    serviceMtime = s.mtime.toISOString();
+                } catch {}
+
+                res.json({
+                    appVersion,
+                    node: process.version,
+                    serverStart,
+                    uptimeSec: Math.floor(process.uptime()),
+                    templateMtime,
+                    serviceMtime
+                });
+            } catch (e) {
+                res.json({ error: 'version_unavailable', detail: String(e?.message || e) });
+            }
+        });
     }
     
     // Save dashboard configuration
@@ -1456,6 +1801,16 @@ export class DashboardService {
     
     getRouter() {
         return this.router;
+    }
+
+    // Sanitize regex for HTML pattern attribute across modern browsers (escape '-' in char classes)
+    sanitizeHtmlPattern(pattern) {
+        try {
+            // Replace hyphen inside character classes with escaped version to avoid 'v' flag issues
+            return pattern.replace(/\[(?:\\.|[^\]\\])*\]/g, (cls) => cls.replace(/-/g, '\\-'));
+        } catch (e) {
+            return pattern; // Fallback to original if something goes wrong
+        }
     }
     
     // Find the line number for a field considering its YAML path context
