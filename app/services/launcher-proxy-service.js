@@ -45,11 +45,11 @@ class DebugLogger {
     }
 
     static logMCPRequest(serviceName, request) {
-        this.log('MCP_OUT', `→ ${serviceName}`, request);
+        this.log(`MCP_OUT:${serviceName}`, `→ ${serviceName}`, request);
     }
 
     static logMCPResponse(serviceName, response) {
-        this.log('MCP_IN', `← ${serviceName}`, response);
+        this.log(`MCP_IN:${serviceName}`, `← ${serviceName}`, response);
     }
 }
 
@@ -77,6 +77,37 @@ export class LauncherProxyService {
         this.servicesListCacheTTL = 2000; // 2 seconds cache
 
         this.setupRoutes();
+        this.failedServices = new Set(); // Services that failed and should not auto-retry
+    }
+
+    writeMessage(serviceName, obj) {
+        const service = this.processes.get(serviceName);
+        if (service?.ioProtocol === 'framed') return this.writeFramed(serviceName, obj);
+        return this.writeJsonl(serviceName, obj);
+    }
+
+    writeFramed(serviceName, obj) {
+        const service = this.processes.get(serviceName);
+        if (!service || !service.proc || !service.proc.stdin) return;
+        const payload = JSON.stringify(obj);
+        const headers = `Content-Length: ${Buffer.byteLength(payload, 'utf8')}`;
+        const framed = `${headers}\r\n\r\n${payload}`;
+        try {
+            service.proc.stdin.write(framed);
+        } catch (e) {
+            console.error(`[${serviceName}] Failed to write framed message:`, e?.message || e);
+        }
+    }
+
+    writeJsonl(serviceName, obj) {
+        const service = this.processes.get(serviceName);
+        if (!service || !service.proc || !service.proc.stdin) return;
+        const payload = JSON.stringify(obj) + '\n';
+        try {
+            service.proc.stdin.write(payload);
+        } catch (e) {
+            console.error(`[${serviceName}] Failed to write JSONL message:`, e?.message || e);
+        }
     }
 
     async initialize() {
@@ -309,10 +340,27 @@ export class LauncherProxyService {
                         }
                     }
 
+                    // Protocol override from config or heuristic (python servers often use framed LSP)
+                    let protocol = undefined;
+                    try {
+                        const cfgProto = (serviceConfig.protocol || '').toString().toLowerCase();
+                        if (cfgProto === 'jsonl' || cfgProto === 'framed') {
+                            protocol = cfgProto;
+                        } else if (cfgProto === 'auto') {
+                            protocol = undefined;
+                        } else {
+                            const sc = String(serviceConfig.startup_command || '').toLowerCase();
+                            if (/(^|\s)(python|pypy)\b/.test(sc) || /\.py(\s|$)/.test(sc) || /(^|\s)uvx(\s|$)/.test(sc)) {
+                                protocol = 'framed';
+                            }
+                        }
+                    } catch {}
+
                     services[serviceConfig.name] = {
                         command: fullCommand,
                         install: installCommands,
-                        env: envMap
+                        env: envMap,
+                        protocol
                     };
                 }
             }
@@ -333,6 +381,10 @@ export class LauncherProxyService {
 
     async startService(serviceName, serviceConfig) {
         console.log(`🔧 Starting ${serviceName} service...`);
+        if (this.failedServices.has(serviceName)) {
+            console.log(`⏭️  Skipping start for ${serviceName} (marked failed). Use manual restart to retry.`);
+            return null;
+        }
 
         // Handle install commands if present
         if (serviceConfig.install) {
@@ -426,8 +478,10 @@ export class LauncherProxyService {
                         setTimeout(() => {
                             if (!installProc.killed) {
                                 console.log(`⏰ Install command taking longer than 5 minutes, still running...`);
-                                const commandString = proc.spawnargs.join(' ');
-                                console.log("install command: " + commandString);                                 
+                                try {
+                                    const commandString = Array.isArray(installProc.spawnargs) ? installProc.spawnargs.join(' ') : '';
+                                    if (commandString) console.log(`install command: ${commandString}`);
+                                } catch {}
                             }
                         }, 5 * 60 * 1000); // 5 minutes
                     });
@@ -445,6 +499,9 @@ export class LauncherProxyService {
         const command = serviceConfig.command || serviceConfig;
 
         const spawnEnv = { ...process.env };
+        // Ensure Python-based servers flush and use UTF-8
+        spawnEnv.PYTHONUNBUFFERED = spawnEnv.PYTHONUNBUFFERED || '1';
+        spawnEnv.PYTHONIOENCODING = spawnEnv.PYTHONIOENCODING || 'utf-8';
         if (serviceConfig && serviceConfig.env && typeof serviceConfig.env === 'object') {
             Object.assign(spawnEnv, serviceConfig.env);
         }
@@ -459,13 +516,32 @@ export class LauncherProxyService {
             initialized: false,
             tools: [],
             serviceName,
-            startTime: Date.now()
+            startTime: Date.now(),
+            ioProtocol: serviceConfig.protocol || undefined
         };
+
+        try {
+            console.log(`[MCP:${serviceName}] I/O protocol: ${service.ioProtocol || 'jsonl (auto)'}`);
+        } catch {}
 
         this.processes.set(serviceName, service);
 
+        // Handle spawn errors (e.g., ENOENT)
+        proc.on('error', (err) => {
+            console.error(`[MCP:${serviceName}] ❌ Spawn error: ${err?.message || err}`);
+            this.failedServices?.add?.(serviceName);
+            this.processes.delete(serviceName);
+            this.invalidateHealthCache();
+            this.invalidateServicesCache();
+            this.notifyToolListChanged();
+            this.notifyResourceListChanged();
+            this.notifyPromptListChanged();
+            this.sendLogToClients('error', `Spawn error for ${serviceName}: ${err?.message || err}`);
+        });
+
         // Handle stdout
         proc.stdout.on('data', (data) => {
+            try { service.ready = true; } catch {}
             service.responseBuffer += data.toString();
             this.processServiceOutput(serviceName);
         });
@@ -479,8 +555,11 @@ export class LauncherProxyService {
         });
 
         // Handle exit
-        proc.on('close', (code) => {
-            console.error(`[${serviceName}] ❌ Process exited with code ${code}`);
+        proc.on('close', (code, signal) => {
+            console.error(`[${serviceName}] ❌ Process exited with code ${code}${signal ? `, signal ${signal}` : ''}`);
+            if (code !== 0) {
+                this.failedServices.add(serviceName);
+            }
             this.processes.delete(serviceName);
             // Invalidate caches immediately
             this.invalidateHealthCache();
@@ -493,7 +572,12 @@ export class LauncherProxyService {
         });
 
         // Initialize the service
-        await this.initializeService(serviceName);
+        try {
+            await this.initializeService(serviceName);
+        } catch (e) {
+            this.failedServices.add(serviceName);
+            throw e;
+        }
 
         return service;
     }
@@ -503,6 +587,10 @@ export class LauncherProxyService {
         if (!service) return;
 
         try {
+            // For framed protocol servers (Python/uvx), wait a brief moment for stdout readiness
+            if (service.ioProtocol === 'framed') {
+                await new Promise(res => setTimeout(res, 200));
+            }
             // Send initialize
             const initRequest = {
                 jsonrpc: "2.0",
@@ -519,8 +607,8 @@ export class LauncherProxyService {
             };
 
             DebugLogger.logMCPRequest(serviceName, initRequest);
-            service.proc.stdin.write(JSON.stringify(initRequest) + '\n');
-            await this.waitForResponse(initRequest.id);
+            this.writeMessage(serviceName, initRequest);
+            await this.waitForResponse(initRequest.id, service.ioProtocol === 'framed' ? 30000 : 15000);
 
             // Send tools/list
             const toolsRequest = {
@@ -531,7 +619,7 @@ export class LauncherProxyService {
             };
 
             DebugLogger.logMCPRequest(serviceName, toolsRequest);
-            service.proc.stdin.write(JSON.stringify(toolsRequest) + '\n');
+            this.writeMessage(serviceName, toolsRequest);
             const toolsResponse = await this.waitForResponse(toolsRequest.id);
 
             if (toolsResponse && toolsResponse.result && toolsResponse.result.tools) {
@@ -629,24 +717,10 @@ export class LauncherProxyService {
     }
 
     notifyPromptListChanged() {
-        if (this.promptListChangeTimeout) {
-            clearTimeout(this.promptListChangeTimeout);
-        }
-
-        this.promptListChangeTimeout = setTimeout(() => {
-            const promptListHash = this.getPromptListHash();
-            if (promptListHash !== this.lastPromptListHash) {
-                this.lastPromptListHash = promptListHash;
-                Promise.all(
-                    Array.from(this.activeServers).map(server =>
-                        Promise.resolve().then(() => server.sendPromptListChanged()).catch(error =>
-                            console.error('Error notifying prompt list changed:', error.message)
-                        )
-                    )
-                );
-                this.invalidateHealthCache();
-            }
-        }, 100);
+        // Some MCP clients/servers do not advertise prompt notification capability.
+        // To avoid fatal errors (assertNotificationCapability), skip sending prompt list changed notifications.
+        // We keep this function as a no-op for stability.
+        return;
     }
 
     getToolListHash() {
@@ -770,29 +844,70 @@ export class LauncherProxyService {
         const service = this.processes.get(serviceName);
         if (!service) return;
 
-        const lines = service.responseBuffer.split('\n');
-        service.responseBuffer = lines.pop() || '';
+        let buf = service.responseBuffer;
 
-        for (const line of lines) {
-            if (!line.trim()) continue;
-
-            try {
-                const response = JSON.parse(line);
-
-                if (this.config.server.log_level.toLowerCase() == "debug") {
-                    DebugLogger.logMCPResponse(serviceName, response);
-                }
-
-                // Handle pending requests
-                if (response.id && this.pendingRequests.has(response.id)) {
-                    const pending = this.pendingRequests.get(response.id);
-                    clearTimeout(pending.timeout);
-                    pending.resolve(response);
-                    this.pendingRequests.delete(response.id);
-                }
-            } catch (error) {
-                // Not JSON, ignore
+        const tryParseLineDelimited = () => {
+            const parts = buf.split('\n');
+            service.responseBuffer = parts.pop() || '';
+            for (const line of parts) {
+                const t = line.trim();
+                if (!t) continue;
+                try {
+                    const response = JSON.parse(t);
+                    this.handleServiceResponse(serviceName, response);
+                } catch {}
             }
+            return true;
+        };
+
+        // If buffer starts with Content-Length, parse framed messages; otherwise try JSONL
+        const parseFramed = () => {
+            let changed = false;
+            while (true) {
+                const idx = buf.indexOf('\r\n\r\n');
+                const idxAlt = buf.indexOf('\n\n');
+                const sep = idx >= 0 ? '\r\n\r\n' : (idxAlt >= 0 ? '\n\n' : null);
+                const sepPos = sep ? buf.indexOf(sep) : -1;
+                if (sepPos < 0) break;
+                const header = buf.slice(0, sepPos);
+                const m = header.match(/Content-Length:\s*(\d+)/i);
+                if (!m) break;
+                const len = parseInt(m[1]);
+                const start = sepPos + sep.length;
+                const body = buf.slice(start, start + len);
+                if (body.length < len) break; // wait for full body
+                try {
+                    const response = JSON.parse(body);
+                    this.handleServiceResponse(serviceName, response);
+                } catch {}
+                buf = buf.slice(start + len);
+                changed = true;
+            }
+            service.responseBuffer = buf;
+            return changed;
+        };
+
+        // Heuristic: if buffer contains 'Content-Length:', parse as framed, else JSONL
+        if (/Content-Length:/i.test(buf)) {
+            if (!parseFramed()) {
+                // if framing incomplete, keep buffer; do nothing
+            }
+        } else {
+            tryParseLineDelimited();
+        }
+    }
+
+    handleServiceResponse(serviceName, response) {
+        try {
+            if (this.config.server?.log_level && this.config.server.log_level.toLowerCase() === 'debug') {
+                DebugLogger.logMCPResponse(serviceName, response);
+            }
+        } catch {}
+        if (response && response.id && this.pendingRequests.has(response.id)) {
+            const pending = this.pendingRequests.get(response.id);
+            clearTimeout(pending.timeout);
+            pending.resolve(response);
+            this.pendingRequests.delete(response.id);
         }
     }
 
@@ -829,7 +944,7 @@ export class LauncherProxyService {
         };
         const reqStr = JSON.stringify(request);
         DebugLogger.logMCPRequest(serviceName, request);
-        service.proc.stdin.write(reqStr + '\n');
+        this.writeMessage(serviceName, request);
 
         let response;
         let respStr = '';
@@ -975,11 +1090,16 @@ export class LauncherProxyService {
 
         for (const [serviceName, serviceConfig] of Object.entries(this.services)) {
             try {
+                if (this.failedServices.has(serviceName)) {
+                    console.log(`⏭️  Not auto-starting failed service: ${serviceName}`);
+                    continue;
+                }
                 await this.startService(serviceName, serviceConfig);
                 this.sendLogToClients('info', `Successfully started service: ${serviceName}`);
             } catch (error) {
                 console.error(`❌ Failed to start ${serviceName}:`, error.message);
                 this.sendLogToClients('error', `Failed to start service ${serviceName}: ${error.message}`);
+                this.failedServices.add(serviceName);
             }
         }
 
@@ -1039,6 +1159,8 @@ export class LauncherProxyService {
         const serviceConfig = this.services[serviceName];
         if (serviceConfig) {
             try {
+                // Clear failure flag on manual restart
+                if (this.failedServices.has(serviceName)) this.failedServices.delete(serviceName);
                 await this.startService(serviceName, serviceConfig);
                 this.sendLogToClients('info', `Successfully restarted service: ${serviceName}`);
                 return true;

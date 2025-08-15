@@ -2,9 +2,11 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import yaml from 'yaml';
 import session from 'express-session';
+import { createClient as createRedisClient } from 'redis';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { request } from 'undici';
@@ -17,6 +19,7 @@ export class DashboardService {
         this.mcpServerRef = mcpServerRef; // Access to server-level reloads
         this.router = express.Router();
         this.config = {};
+        this.sessionStore = null;
         this.setupSession();
         this.setupRoutes();
         this.setupHashGenerationRoute();
@@ -27,12 +30,82 @@ export class DashboardService {
     }
 
     setupSession() {
-        this.router.use(session({
+        // Try to build a Redis-backed session store; fallback to MemoryStore
+        const buildRedisStore = () => {
+            const store = new (class RedisSessionStore extends session.Store {
+                constructor(client, prefix = 'dash:sess:') {
+                    super();
+                    this.client = client;
+                    this.prefix = prefix;
+                }
+                _key(sid) { return this.prefix + sid; }
+                async get(sid, cb) {
+                    try {
+                        const v = await this.client.get(this._key(sid));
+                        cb(null, v ? JSON.parse(v) : null);
+                    } catch (e) { cb(e); }
+                }
+                async set(sid, sess, cb) {
+                    try {
+                        const maxAge = (sess?.cookie?.maxAge ?? sess?.cookie?.originalMaxAge);
+                        const ttl = Math.max(60, Math.floor((maxAge ? maxAge : 24*60*60*1000) / 1000));
+                        await this.client.setEx(this._key(sid), ttl, JSON.stringify(sess));
+                        cb && cb(null);
+                    } catch (e) { cb && cb(e); }
+                }
+                async destroy(sid, cb) {
+                    try { await this.client.del(this._key(sid)); cb && cb(null); } catch (e) { cb && cb(e); }
+                }
+                async touch(sid, sess, cb) {
+                    try {
+                        const maxAge = (sess?.cookie?.maxAge ?? sess?.cookie?.originalMaxAge);
+                        const ttl = Math.max(60, Math.floor((maxAge ? maxAge : 24*60*60*1000) / 1000));
+                        await this.client.expire(this._key(sid), ttl);
+                        cb && cb(null);
+                    } catch (e) { cb && cb(e); }
+                }
+            })(this._initRedisClient());
+            return store;
+        };
+
+        try {
+            this.sessionStore = buildRedisStore();
+        } catch {
+            this.sessionStore = null;
+        }
+
+        const sessMiddleware = session({
             secret: process.env.SESSION_SECRET || 'mcp-dashboard-secret-change-in-production',
             resave: false,
             saveUninitialized: false,
-            cookie: { secure: false, httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
-        }));
+            store: this.sessionStore || undefined,
+            cookie: { secure: false, httpOnly: true, sameSite: 'lax' }
+        });
+        this.router.use(sessMiddleware);
+    }
+
+    _initRedisClient() {
+        try {
+            const cfgPath = path.resolve(this.appPath + '/config/local.yaml');
+            // sync read for simplicity; setupSession runs at construction time
+            let host = '127.0.0.1', port = 6379;
+            try {
+                const raw = fsSync.readFileSync(cfgPath, 'utf8');
+                const cfg = yaml.parse(raw) || {};
+                if (cfg.redis?.host) host = String(cfg.redis.host);
+                if (cfg.redis?.port) port = Number(cfg.redis.port);
+            } catch {}
+
+            const client = createRedisClient({
+                socket: { host, port, connectTimeout: 3000, keepAlive: 10000 }
+            });
+            client.on('error', (err) => console.error('[DASHBOARD] Redis error:', err?.message || err));
+            client.connect().catch(err => console.error('[DASHBOARD] Redis connect failed:', err?.message || err));
+            return client;
+        } catch (e) {
+            console.error('[DASHBOARD] Failed to create Redis client:', e?.message || e);
+            return null;
+        }
     }
 
     // Stats API
@@ -257,12 +330,25 @@ export class DashboardService {
         // Login (dashboard users)
         this.router.post('/login', async (req, res) => {
             try {
-                const { email, password } = req.body || {};
+                const { email, password, remember } = req.body || {};
                 if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
                 const user = await this.authenticateUser(email, password);
                 req.session.authenticated = true;
                 req.session.userEmail = user.email;
-                res.json({ success: true });
+                try {
+                    if (remember === true || remember === 'true') {
+                        // Persistent cookie for 30 days
+                        req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
+                    } else {
+                        // Session-only cookie (expire on browser close)
+                        req.session.cookie.expires = false;
+                        delete req.session.cookie.maxAge;
+                    }
+                } catch {}
+                req.session.save(err => {
+                    if (err) return res.status(500).json({ error: 'Session save failed' });
+                    res.json({ success: true, remember: !!(remember === true || remember === 'true') });
+                });
             } catch (e) {
                 res.status(401).json({ error: e.message });
             }

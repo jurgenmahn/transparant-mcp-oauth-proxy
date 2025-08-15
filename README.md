@@ -132,19 +132,28 @@ redis:
   host: localhost
   port: 6379
 
+```yaml
 # MCP Services Configuration
 mcp_services:
   - enabled: true
     name: memory
     startup_command: npx -y @modelcontextprotocol/server-memory
     options: []
+    protocol: auto  # auto, jsonl, or framed
     
   - enabled: true
     name: filesystem
     startup_command: npx -y @modelcontextprotocol/server-filesystem
     options:
       - /workspace
+    protocol: jsonl  # Force JSONL for Node.js servers
       
+  - enabled: true
+    name: python-service
+    startup_command: python3 my_mcp_server.py
+    options: []
+    protocol: framed  # Force framed for Python servers
+    
   - enabled: true
     name: git
     startup_command: npx -y @cyanheads/git-mcp-server
@@ -373,9 +382,54 @@ All script executions are logged with timestamps to `/tmp/install-scripts-YYYYMM
 - Package creation results
 - Summary statistics (successful/skipped/failed counts)
 
-## 📊 Monitoring & Administration
+## 🚀 Advanced Features
 
-### Health Endpoints
+### 🔄 Intelligent Service Management
+
+**No Auto-Restart on Failure:** Services that fail to start or crash are automatically blacklisted from auto-restart attempts. This prevents endless restart loops and resource waste.
+
+- **Failure Tracking:** Failed services are marked and won't restart automatically
+- **Manual Recovery:** Use the "Restart" button in the Stats tab to retry failed services
+- **Clean State Management:** Each restart clears the failure flag for a fresh attempt
+
+### 🔌 Dual-Protocol I/O Support
+
+**Automatic Protocol Detection:** The launcher intelligently handles both Node.js and Python MCP servers with their different communication protocols.
+
+- **JSONL (Default):** Line-delimited JSON for Node.js MCP servers
+- **LSP Framed:** Content-Length framed messages for Python MCP servers
+- **Auto-Detection:** Heuristic detection based on command patterns and runtime behavior
+- **Manual Override:** Per-service protocol selection in the dashboard
+
+Configure protocol per service:
+```yaml
+mcp_services:
+  - name: node-server
+    protocol: jsonl    # Force JSONL
+  - name: python-server  
+    protocol: framed   # Force LSP framing
+  - name: auto-detect
+    protocol: auto     # Use detection (default)
+```
+
+### 📊 Enhanced Logging & Debugging
+
+**Tagged Log System:** Each component and MCP service gets unique log tags for easy filtering and debugging.
+
+- **Component Tags:** `[SERVER]`, `[OAUTH]`, `[DASHBOARD]`, `[MCP_IN]`, `[MCP_OUT]`
+- **Service Tags:** `[service-name]` for each individual MCP service
+- **Real-time Filtering:** Filter logs by tag, level, or text content
+- **Debug Console:** Detailed request/response logging at `/debug`
+
+### 🔐 Remember Me Login
+
+**Persistent Sessions:** Optional extended login sessions for improved user experience.
+
+- **Session Cookie:** Default behavior (browser session only)
+- **Extended Session:** 30-day persistence when "Remember me" is checked
+- **Secure Implementation:** Proper cookie management with configurable expiration
+
+## 📊 Monitoring & Administration
 
 ```bash
 # Overall system health
@@ -391,11 +445,12 @@ curl https://your-domain.com/dashboard/api/mcp-stats
 ### Dashboard Features
 
 - **General Tab:** Server settings, ports, log levels
-- **MCP Tab:** Service management, user configuration
+- **MCP Tab:** Service management, user configuration, I/O protocol selection per service
 - **Hydra Tab:** OAuth provider settings
-- **Stats Tab:** Real-time service usage statistics
+- **Stats Tab:** Real-time service usage statistics with manual restart controls
 - **Users Tab:** Dashboard user management
 - **Admin Tab:** Redis management, Hydra client administration
+- **Enhanced Logging:** Tagged log entries with filtering capabilities
 
 ### Debug Console
 
@@ -460,15 +515,18 @@ We welcome contributions! Areas where help is needed:
 
 This project is open source and available under the [MIT License](LICENSE).
 
-## 🙏 Acknowledgments
 
-**Built with human ingenuity & AI collaboration**
+## 🚀 Built with human ingenuity & a dash of AI wizardry
 
-This project represents the intersection of practical DevOps needs and cutting-edge AI tooling. Every feature solves real-world integration challenges.
+This project emerged from late-night coding sessions, unexpected inspiration, and the occasional debugging dance. Every line of code has a story behind it.
 
-**Authored by:** The MCP Community with AI assistance
+Found a bug? Have a wild idea? The issues tab is your canvas.
 
-*"Bridging the gap between AI capabilities and practical implementation."*
+Authored By: [👨‍💻 Jurgen Mahn](https://github.com/jurgenmahn) with some help from AI code monkies [Claude code](https://claude.ai) & [Codex](https://openai.com)
+
+*"Sometimes the code writes itself. Other times, we collaborate with the machines."*
+
+⚡ Happy hacking, fellow explorer ⚡
 
 ---
 

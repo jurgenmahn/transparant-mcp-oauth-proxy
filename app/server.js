@@ -42,7 +42,9 @@ class MCPServer {
             error: console.error.bind(console),
         };
         const push = (level, args) => {
-            const rec = { ts: new Date().toISOString(), level, msg: args.map(a => (typeof a === 'string' ? a : (()=>{try{return JSON.stringify(a);}catch{return String(a)}})())).join(' ') };
+            const join = args.map(a => (typeof a === 'string' ? a : (()=>{try{return JSON.stringify(a);}catch{return String(a)}})())).join(' ');
+            const tag = this.extractLogTag(join) || 'server';
+            const rec = { ts: new Date().toISOString(), level, tag, msg: join };
             this.logBuffer.push(rec);
             if (this.logBuffer.length > this.maxLogEntries) { this.logBuffer.splice(0, this.logBuffer.length - this.maxLogEntries); }
             this.logEmitter.emit('log', rec);
@@ -51,6 +53,21 @@ class MCPServer {
         console.info = (...args) => { try { orig.info(...args); } finally { push('info', args); } };
         console.warn = (...args) => { try { orig.warn(...args); } finally { push('warn', args); } };
         console.error = (...args) => { try { orig.error(...args); } finally { push('error', args); } };
+    }
+
+    extractLogTag(str) {
+        try {
+            // [ISO-TIME] [CATEGORY] ...
+            let m = str.match(/^\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]\s+\[([^\]]+)\]/);
+            if (m) return m[2];
+            // [TAG] ... (not a timestamp)
+            m = str.match(/^\[([^\]]+)\]\s+/);
+            if (m && !/\d{4}-\d{2}-\d{2}T/.test(m[1])) return m[1];
+            // find bracketed TAG like [MCP:service]
+            m = str.match(/\[([A-Z][A-Z0-9_:-]{1,64})\]/);
+            if (m) return m[1];
+        } catch {}
+        return null;
     }
 
     // Reload config and restart only launcher proxy + OAuth services without restarting dashboard

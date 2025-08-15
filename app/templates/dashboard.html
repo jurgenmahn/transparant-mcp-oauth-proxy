@@ -538,6 +538,10 @@
                         <label for="password">Password</label>
                         <input type="password" id="password" required>
                     </div>
+                    <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="remember" style="width:auto;">
+                        <label for="remember" style="margin:0;">Remember me</label>
+                    </div>
                     <button type="submit" class="btn">Login</button>
                 </form>
                 <div id="auth-error" class="error-message" style="display: none;"></div>
@@ -677,6 +681,19 @@
                                     <option value="info">INFO</option>
                                     <option value="warn">WARN</option>
                                     <option value="error">ERROR</option>
+                                </select>
+                                <input id="logs-tag" type="text" placeholder="Tag (e.g., MCP_IN, my-service)" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; min-width:180px;">
+                                <select id="logs-service" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px;">
+                                    <option value="all">All services</option>
+                                </select>
+                                <select id="logs-common-tag" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px;">
+                                    <option value="">Common tag</option>
+                                    <option value="MCP_IN">MCP_IN</option>
+                                    <option value="MCP_OUT">MCP_OUT</option>
+                                    <option value="HTTP_IN">HTTP_IN</option>
+                                    <option value="HTTP_OUT">HTTP_OUT</option>
+                                    <option value="REQUEST_">REQUEST_</option>
+                                    <option value="RESPONSE_">RESPONSE_</option>
                                 </select>
                                 <button type="button" id="logs-apply" class="btn btn-inline">Apply</button>
                                 <button type="button" id="logs-reset" class="btn btn-inline">Reset</button>
@@ -873,12 +890,13 @@
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            const remember = !!document.getElementById('remember').checked;
             
             try {
                 const response = await fetch('/dashboard/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({ email, password, remember })
                 });
                 
                 if (response.ok) {
@@ -1121,13 +1139,25 @@
         }
 
         function formatLog(rec) {
-            return `[${rec.ts}] [${String(rec.level||'').toUpperCase()}] ${rec.msg}`;
+            const lvl = String(rec.level||'').toUpperCase();
+            const tag = rec.tag ? ` [${rec.tag}]` : '';
+            return `[${rec.ts}] [${lvl}]${tag} ${rec.msg}`;
         }
         function logMatches(rec) {
             const lvlSel = (document.getElementById('logs-level')?.value || 'all').toLowerCase();
             const text = (document.getElementById('logs-filter')?.value || '').trim().toLowerCase();
+            const tag = (document.getElementById('logs-tag')?.value || '').trim().toLowerCase();
+            const svc = (document.getElementById('logs-service')?.value || 'all').toLowerCase();
             if (lvlSel !== 'all') {
                 if (String(rec.level||'').toLowerCase() !== lvlSel) return false;
+            }
+            if (tag) {
+                if (!rec.tag || String(rec.tag).toLowerCase().indexOf(tag) === -1) return false;
+            }
+            if (svc !== 'all') {
+                const taglc = String(rec.tag||'').toLowerCase();
+                const prefixes = [`mcp:${svc}`, `mcp_in:${svc}`, `mcp_out:${svc}`];
+                if (!prefixes.some(p => taglc.startsWith(p))) return false;
             }
             if (text) {
                 const line = `${rec.ts} ${rec.level} ${rec.msg}`.toLowerCase();
@@ -1362,6 +1392,12 @@
                             <button type="button" class="add-array-item" onclick="addArrayItem('mcp_services_${index}_options','${fileAlias}','mcp_services','mcp_services','mcp_services[${index}][options]')">Add Option</button>
                         </div>
                         <div class="field-group">
+                            ${select(fileAlias, 'mcp_services', 'protocol', 'I/O Protocol', esc(svc.protocol||'auto'), ['auto','jsonl','framed'])
+                                .replace('data-yaml-key="protocol"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                                .replace('<select', `<select name="mcp_services[${index}][protocol]"`)}
+                            <div class="help-text">Protocol for stdio communication. Auto uses detection (Python: framed; Node: JSONL). Choose JSONL for most Node servers, Framed for Python LSP-style servers.</div>
+                        </div>
+                        <div class="field-group">
                             <label>Environment Variables</label>
                             <div class="array-field" id="mcp_services_${index}_env">
                                 ${envItems}
@@ -1448,6 +1484,8 @@
 
         // Populate forms after auth
         renderForms();
+        // Also populate logs service filter with MCP service names
+        populateLogsServiceSelect();
 
         // Build full-file payloads from hardcoded form
         async function buildFullFilePayloadsFromForm() {
@@ -1671,12 +1709,38 @@
             if (box) box.innerHTML = '';
         });
         document.getElementById('logs-apply')?.addEventListener('click', renderLogs);
+        document.getElementById('logs-common-tag')?.addEventListener('change', (e)=>{
+            const v = e.target.value || '';
+            const tagInput = document.getElementById('logs-tag');
+            if (tagInput) tagInput.value = v;
+        });
         document.getElementById('logs-reset')?.addEventListener('click', ()=>{
-            const f = document.getElementById('logs-filter'); const l = document.getElementById('logs-level');
+            const f = document.getElementById('logs-filter'); const l = document.getElementById('logs-level'); const t = document.getElementById('logs-tag'); const s = document.getElementById('logs-service');
             if (f) f.value = '';
             if (l) l.value = 'all';
+            if (t) t.value = '';
+            if (s) s.value = 'all';
             renderLogs();
         });
+        function populateLogsServiceSelect() {
+            try {
+                const sel = document.getElementById('logs-service');
+                if (!sel) return;
+                // Extract from loaded MCP config
+                const files = window._fileMap || {};
+                const mcp = files.MCP; const o = mcp?.obj || {};
+                const arr = Array.isArray(o.mcp_services) ? o.mcp_services : [];
+                const names = arr.filter(s=>s&&s.name).map(s=>s.name);
+                // Reset options (keep 'all')
+                sel.querySelectorAll('option:not([value="all"])').forEach(opt=>opt.remove());
+                for (const n of names) {
+                    const opt = document.createElement('option');
+                    opt.value = n;
+                    opt.textContent = n;
+                    sel.appendChild(opt);
+                }
+            } catch {}
+        }
         document.getElementById('logs-filter')?.addEventListener('keyup', (e)=>{ if (e.key==='Enter') renderLogs(); });
         
         // Load users
