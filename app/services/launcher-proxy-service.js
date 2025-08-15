@@ -669,7 +669,7 @@ export class LauncherProxyService {
     }
 
     convertToZodSchema(inputSchema) {
-        // Convert JSON Schema to Zod schema dynamically
+        // Convert JSON Schema to a ZodRawShape (object of Zod fields)
         if (!inputSchema || !inputSchema.properties) {
             return {};
         }
@@ -869,63 +869,7 @@ export class LauncherProxyService {
             }
         }
 
-        // Add prompts handler with argument support
-        server.prompt("help", "Get help for a specific service", {
-            service: {
-                type: "string",
-                description: "The service name to get help for",
-                required: true
-            }
-        }, async (args) => {
-            const serviceName = args.service;
-            const service = this.processes.get(serviceName);
-
-            if (!service || !service.initialized) {
-                throw new Error(`Service ${serviceName} not available`);
-            }
-
-            let helpText = `Help for ${serviceName} service:\n\n`;
-            helpText += `Tools available:\n`;
-
-            for (const tool of service.tools) {
-                helpText += `- ${serviceName}_${tool.name}: ${tool.description}\n`;
-            }
-
-            return {
-                messages: [{
-                    role: "user",
-                    content: {
-                        type: "text",
-                        text: helpText
-                    }
-                }]
-            };
-        });
-
-        // Add general prompts handler
-        server.prompt("*", "List all available prompts", async () => {
-            const prompts = [];
-            prompts.push({
-                name: "help",
-                description: "Get help for a specific service",
-                arguments: [{
-                    name: "service",
-                    description: "The service name to get help for",
-                    required: true
-                }]
-            });
-
-            for (const [serviceName, service] of this.processes) {
-                if (service.initialized) {
-                    prompts.push({
-                        name: `${serviceName}_help`,
-                        description: `Get help for ${serviceName} service tools`,
-                        arguments: []
-                    });
-                }
-            }
-            return prompts;
-        });
+        // (Prompts were removed to avoid schema compatibility issues)
 
         // Note: Advanced handlers like completion and roots would need to be implemented
         // using server.server.setRequestHandler() with appropriate schemas, but are

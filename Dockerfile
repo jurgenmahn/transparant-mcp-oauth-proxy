@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
         libldap2-dev libyaml-0-2 brotli libpcre2-8-0 \
         libpcre3-dev libpcre3 \
         libssl3 libgeoip1 libxslt1.1 \ 
-        ca-certificates build-essential make gcc g++ python3 dnsutils nano  redis-server redis-tools xvfb wget && \
+        ca-certificates build-essential make gcc g++ python3 python3-pip python3-venv dnsutils nano  redis-server redis-tools xvfb wget rsync && \
         update-ca-certificates && \
         cd /tmp && \
         wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
@@ -53,6 +53,19 @@ COPY ./app/server.js ./server.js
 COPY ./app/services ./services
 COPY ./static /static
 
+FROM root as custom-script-installer
+COPY ./custom-install-scripts /custom-install-scripts
+COPY ./conf/scripts/install-custom-scripts.sh /
+
+# run user defined custom scripts and capture all changes
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=tmpfs,target=/var/lib/apt/lists/ \
+    --mount=type=tmpfs,target=/tmp \
+    chmod +x /install-custom-scripts.sh && \
+    touch /tmp/before_install && \
+    /install-custom-scripts.sh && \
+    find / -newer /tmp/before_install 2>/dev/null | grep -v -E '^/(proc|sys|dev|tmp)' > /custom-script-installer-changed_files.txt
+
 FROM root AS base
 COPY --from=hydra-downloader /usr/local/bin/hydra /usr/bin/hydra
 COPY --from=hydra-downloader /hydra-data /hydra-data
@@ -75,6 +88,9 @@ RUN chmod +x /scripts/*.sh && \
     echo "source /.buildvars" >> /etc/bash.bashrc && \
     rm /.buildvars-nodejs-builder
 
+# All changes from custom installed scripts
+COPY --from=custom-script-installer /custom-script-installer-changed_files.txt /tmp/
+RUN --mount=from=custom-script-installer,source=/,target=/mnt rsync -av --files-from=/tmp/custom-script-installer-changed_files.txt --relative /mnt/ /
 
 EXPOSE 3000
 
