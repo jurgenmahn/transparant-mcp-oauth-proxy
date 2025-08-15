@@ -61,10 +61,9 @@ COPY ./conf/scripts/install-custom-scripts.sh /
 RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=tmpfs,target=/var/lib/apt/lists/ \
     --mount=type=tmpfs,target=/tmp \
+    --mount=type=cache,target=/install-packages,id=mcp-custom-script-installer \
     chmod +x /install-custom-scripts.sh && \
-    touch /tmp/before_install && \
-    /install-custom-scripts.sh && \
-    find / -newer /tmp/before_install 2>/dev/null | grep -v -E '^/(proc|sys|dev|tmp)' > /custom-script-installer-changed_files.txt
+    /install-custom-scripts.sh
 
 FROM root AS base
 COPY --from=hydra-downloader /usr/local/bin/hydra /usr/bin/hydra
@@ -79,7 +78,7 @@ COPY --from=nodejs-app /node-apps/templates /node-apps/templates
 COPY --from=nodejs-app /static /static
 COPY ./conf/ /
 
-# Setup folders and symlinks, collect all data which should be copied to volumes on runtime and apply nmp env vars
+# Setup folders and symlinks, collect all data which should be copied to volumes on runtime and apply npm env vars
 RUN chmod +x /scripts/*.sh && \
     mkdir -p /init_data/hydra-data && \ 
     cp -a /hydra-data /init_data/ && \
@@ -89,8 +88,8 @@ RUN chmod +x /scripts/*.sh && \
     rm /.buildvars-nodejs-builder
 
 # All changes from custom installed scripts
-COPY --from=custom-script-installer /custom-script-installer-changed_files.txt /tmp/
-RUN --mount=from=custom-script-installer,source=/,target=/mnt rsync -av --files-from=/tmp/custom-script-installer-changed_files.txt --relative /mnt/ /
+COPY --from=custom-script-installer /install-packages/ /install-packages/
+RUN cd /install-packages && for pkg in *.tar.gz; do [ -f "$pkg" ] && echo "Installing $pkg" && tar -xzf "$pkg" -C / && echo "Success: $pkg" || echo "Failed: $pkg"; done
 
 EXPOSE 3000
 
