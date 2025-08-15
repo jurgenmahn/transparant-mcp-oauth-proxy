@@ -6,7 +6,8 @@ import { LauncherProxyService } from './services/launcher-proxy-service.js';
 import { UnifiedOAuthService } from './services/unified-oauth-service.js';
 import YAML from 'yaml';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import path, { dirname } from 'path';
+import { EventEmitter } from 'events';
 
 class MCPServer {
     constructor() {
@@ -19,7 +20,37 @@ class MCPServer {
         this.services = {};
         this.debugRequests = new Map(); // Store debug data: requestId -> {request, response}
         this.maxDebugEntries = 1000; // Limit memory usage
+        this.logEmitter = new EventEmitter();
+        this.logBuffer = [];
+        this.maxLogEntries = 1000;
+        this.captureConsole();
         this.loadConfig();
+
+        // Mount critical static routes immediately using absolute paths (available before services init)
+        try {
+            const rootPath = path.resolve(this.appPath, '..');
+            this.app.use('/static', express.static(path.join(rootPath, 'static')));
+            this.app.use('/templates', express.static(path.join(rootPath, 'templates')));
+        } catch {}
+    }
+
+    captureConsole() {
+        const orig = {
+            log: console.log.bind(console),
+            info: console.info?.bind(console) || console.log.bind(console),
+            warn: console.warn.bind(console),
+            error: console.error.bind(console),
+        };
+        const push = (level, args) => {
+            const rec = { ts: new Date().toISOString(), level, msg: args.map(a => (typeof a === 'string' ? a : (()=>{try{return JSON.stringify(a);}catch{return String(a)}})())).join(' ') };
+            this.logBuffer.push(rec);
+            if (this.logBuffer.length > this.maxLogEntries) { this.logBuffer.splice(0, this.logBuffer.length - this.maxLogEntries); }
+            this.logEmitter.emit('log', rec);
+        };
+        console.log = (...args) => { try { orig.log(...args); } finally { push('info', args); } };
+        console.info = (...args) => { try { orig.info(...args); } finally { push('info', args); } };
+        console.warn = (...args) => { try { orig.warn(...args); } finally { push('warn', args); } };
+        console.error = (...args) => { try { orig.error(...args); } finally { push('error', args); } };
     }
 
     // Reload config and restart only launcher proxy + OAuth services without restarting dashboard
@@ -436,26 +467,79 @@ class MCPServer {
         this.services.unifiedOAuth = new UnifiedOAuthService(this.appPath);
 
         try {
-            // Initialize Dashboard Service (already created)
+            // Initialize Dashboard first for fast UI
             console.log('  📊 Initializing Dashboard Service...');
             await this.services.dashboard.initialize();
             console.log('  ✅ Dashboard Service ready');
 
-            // Initialize Launcher Proxy Service (already created)
-            console.log('  🚀 Initializing Launcher Proxy Service...');
-            await this.services.launcherProxy.initialize();
-            console.log('  ✅ Launcher Proxy Service ready');
-
-            // Initialize Unified OAuth Service
-            console.log('  🔐 Initializing Unified OAuth Service...');
-            await this.services.unifiedOAuth.initialize();
-            console.log('  ✅ Unified OAuth Service ready');
-
-            console.log('✅ All services initialized successfully');
+            // Initialize other services in background
+            ;(async () => {
+                try {
+                    console.log('  🚀 Initializing Launcher Proxy Service...');
+                    await this.services.launcherProxy.initialize();
+                    console.log('  ✅ Launcher Proxy Service ready');
+                } catch (e) {
+                    console.error('❌ Launcher Proxy init failed:', e);
+                }
+                try {
+                    console.log('  🔐 Initializing Unified OAuth Service...');
+                    await this.services.unifiedOAuth.initialize();
+                    console.log('  ✅ Unified OAuth Service ready');
+                } catch (e) {
+                    console.error('❌ Unified OAuth init failed:', e);
+                }
+                try {
+                    await this.setupRemainingRoutes();
+                    console.log('✅ Remaining routes mounted');
+                } catch (e) {
+                    console.error('❌ Failed mounting remaining routes:', e);
+                }
+            })();
         } catch (error) {
-            console.error('❌ Error initializing services:', error);
+            console.error('❌ Error initializing dashboard service:', error);
             throw error;
         }
+    }
+
+    mountBaseRoutes() {
+        // Debug (available early)
+        this.app.get('/debug', (req, res) => {
+            const { method, url, status, limit } = req.query;
+            let debugData = Array.from(this.debugRequests.values());
+            if (method) debugData = debugData.filter(entry => entry.request.method.toLowerCase() === String(method).toLowerCase());
+            if (url) debugData = debugData.filter(entry => entry.request.url.includes(url));
+            if (status) debugData = debugData.filter(entry => entry.response && String(entry.response.status) === String(status));
+            debugData.sort((a, b) => a.request.startTime - b.request.startTime);
+            const limitNum = parseInt(limit) || 100;
+            debugData = debugData.slice(-limitNum);
+            const html = this.generateDebugHtml(debugData);
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(html);
+        });
+
+        // Mount dashboard router early
+        this.app.use('/dashboard', this.services.dashboard.getRouter());
+
+        // Simple health until OAuth mounts its own
+        this.app.get('/health', (_req, res) => res.json({ status: 'starting', ts: new Date().toISOString() }));
+    }
+
+    async setupRemainingRoutes() {
+        // Remove placeholder /health (not necessary; keep both ok)
+        // Mount OAuth
+        this.app.use('/oauth', this.services.unifiedOAuth.getRouter());
+        this.app.use('/', this.services.unifiedOAuth.getRouter());
+
+        // Apply OIDC middleware and MCP routes
+        const oidcMiddleware = this.services.unifiedOAuth.getOpenIDConnectMiddleware?.();
+        if (oidcMiddleware) this.app.use('/mcp', oidcMiddleware);
+        this.app.use('/mcp', this.services.launcherProxy.getRouter());
+
+        // Fallback route (add last)
+        this.app.use('*', (req, res) => {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Route not found', path: req.originalUrl }));
+        });
     }
 
     async setupServiceRoutes() {
@@ -497,28 +581,9 @@ class MCPServer {
             res.end(html);
         });
 
-        // Dashboard routes (prefix: /dashboard)
-        this.app.use('/dashboard', this.services.dashboard.getRouter());
-
-        // Unified OAuth Service routes - single consolidated router
-        this.app.use('/oauth', this.services.unifiedOAuth.getRouter());
-        this.app.use('/', this.services.unifiedOAuth.getRouter()); // For root-level endpoints (/authorize, /.well-known/*)
-
-        // Apply OpenID Connect middleware to /mcp/* routes
-        const oidcMiddleware = this.services.unifiedOAuth.getOpenIDConnectMiddleware();
-        this.app.use('/mcp', oidcMiddleware);
-
-        // Launcher Proxy routes - Mount under /mcp to match OAuth discovery document
-        this.app.use("/mcp", this.services.launcherProxy.getRouter());
-
-        // Fallback route
-        this.app.use('*', (req, res) => {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                error: 'Route not found',
-                path: req.originalUrl
-            }));
-        });
+        // Legacy: keep for compatibility if still invoked
+        this.mountBaseRoutes();
+        await this.setupRemainingRoutes();
 
     }
 
@@ -526,22 +591,23 @@ class MCPServer {
         try {
             console.log('🚀 Starting MCP Server...');
 
-            // Start HTTP server first
+            // Prepare middleware and base routes before listen
+            await this.setupMiddleware();
+            console.log('✅ Middleware ready');
+
+            // Create services
+            this.services.dashboard = new DashboardService(this.appPath, this);
+            this.services.launcherProxy = new LauncherProxyService(this.appPath);
+            this.services.unifiedOAuth = new UnifiedOAuthService(this.appPath);
+
+            // Initialize dashboard and mount base routes
+            await this.services.dashboard.initialize();
+            this.mountBaseRoutes();
+
             console.log('🌐 Starting HTTP server on port', this.port);
             this.server = this.app.listen(this.port, async () => {
-
-                // Initialize services in the background after server is listening
-                console.log('📋 Initializing services in background...');
-                try {
-                    await this.setupMiddleware();
-                    console.log('✅ Middleware ready');
-                    await this.initializeServices();
-                    console.log('✅ Services ready');
-                    await this.setupServiceRoutes();
-                    console.log('✅ Service routes ready');
-                } catch (error) {
-                    console.error('❌ Error initializing services in background:', error);
-                }
+                console.log('📋 Initializing remaining services in background...');
+                await this.initializeServices();
             });
 
             // Graceful shutdown

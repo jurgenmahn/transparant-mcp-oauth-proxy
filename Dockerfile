@@ -62,7 +62,9 @@ COPY ./conf/scripts/install-custom-scripts.sh /
 RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=tmpfs,target=/var/lib/apt/lists/ \
     --mount=type=tmpfs,target=/tmp \
-    --mount=type=cache,target=/install-packages,id=mcp-custom-script-installer-cache \
+#    --mount=type=cache,target=/install-packages,id=mcp-custom-script-installer-cache \
+    mkdir -p /install-packages/ && \
+    touch /install-packages/custom-installable-tar-packages.txt && \
     chmod +x /install-custom-scripts.sh && \
     /install-custom-scripts.sh
 
@@ -89,7 +91,7 @@ RUN chmod +x /scripts/*.sh && \
     rm /.buildvars-nodejs-builder
 
 # All changes from custom installed scripts
-COPY --from=custom-script-installer /install-packages/ /install-packages/
+COPY --from=custom-script-installer /install-packages /install-packages
 RUN cd /install-packages && for pkg in *.tar.gz; do [ -f "$pkg" ] && echo "Installing $pkg" && tar -xzf "$pkg" -C / && echo "Success: $pkg" || echo "Failed: $pkg"; done
 
 EXPOSE 3000

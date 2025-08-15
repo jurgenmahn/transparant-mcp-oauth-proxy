@@ -567,6 +567,7 @@
                     <button class="tab-btn" data-tab="stats">Stats</button>
                     <button class="tab-btn" data-tab="users">Dashboard Users</button>
                     <button class="tab-btn" data-tab="admin">Admin</button>
+                    <button class="tab-btn" data-tab="logs">Logs</button>
                 </div>
 
                 <!-- Configuration Form across tabs (only config tabs inside the form) -->
@@ -589,10 +590,12 @@
                                     <thead>
                                         <tr style="text-align:left; border-bottom:1px solid #e2e8f0;">
                                             <th style="padding:8px 6px;">Service</th>
+                                            <th style="padding:8px 6px;">Status</th>
                                             <th style="padding:8px 6px;">Calls</th>
                                             <th style="padding:8px 6px;">Bytes Out</th>
                                             <th style="padding:8px 6px;">Bytes In</th>
                                             <th style="padding:8px 6px;">Last Call</th>
+                                            <th style="padding:8px 6px;">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody id="stats-body"></tbody>
@@ -661,6 +664,33 @@
                     </div>
                 </div>
 
+                <!-- Logs tab -->
+                <div class="tab-pane" id="tab-logs">
+                    <div class="section">
+                        <div class="section-header">Server Logs (Live)</div>
+                        <div class="section-content expanded">
+                            <div class="help-text">Realtime server logs. Connects via EventSource; shows last 1000 lines and updates live.</div>
+                            <div style="display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap;">
+                                <input id="logs-filter" type="text" placeholder="Filter text (case-insensitive)" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; min-width:220px;">
+                                <select id="logs-level" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px;">
+                                    <option value="all">All levels</option>
+                                    <option value="info">INFO</option>
+                                    <option value="warn">WARN</option>
+                                    <option value="error">ERROR</option>
+                                </select>
+                                <button type="button" id="logs-apply" class="btn btn-inline">Apply</button>
+                                <button type="button" id="logs-reset" class="btn btn-inline">Reset</button>
+                            </div>
+                            <div style="border:1px solid #e2e8f0; border-radius:8px; background:#0b1020; color:#e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; padding:10px; height:340px; overflow:auto;" id="logs-box"></div>
+                            <div style="margin-top:8px; display:flex; gap:8px;">
+                                <button type="button" id="logs-pause" class="btn btn-inline">Pause</button>
+                                <button type="button" id="logs-resume" class="btn btn-inline">Resume</button>
+                                <button type="button" id="logs-clear" class="btn btn-inline">Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Messages -->
                 <div id="save-message" class="success" style="display: none;"></div>
                 <div id="save-error" class="error" style="display: none;"></div>
@@ -668,8 +698,8 @@
         </div>
     </div>
     
-    <!-- Edit User Modal -->
-    <div id="edit-user-modal" class="modal">
+                <!-- Edit User Modal -->
+                <div id="edit-user-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <span class="close">&times;</span>
@@ -696,7 +726,7 @@
     </div>
     
     <!-- (Preview modal removed) -->
-    
+
     <!-- Confirm Modal -->
     <div id="confirm-modal" class="modal">
         <div class="modal-content">
@@ -710,6 +740,32 @@
                     <button type="button" id="confirm-cancel" class="logout-btn">Cancel</button>
                     <button type="button" id="confirm-ok" class="btn">OK</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tools Modal -->
+    <div id="tools-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span id="tools-close" class="close">&times;</span>
+                <h2 id="tools-title">Service Tools</h2>
+            </div>
+            <div class="modal-body">
+                <div class="help-text">Realtime list of tools exposed by the service.</div>
+                <div style="display:flex; gap:8px; margin:10px 0;">
+                    <button type="button" id="tools-refresh" class="btn btn-inline">Refresh</button>
+                </div>
+                <div id="tools-error" class="error" style="display:none;"></div>
+                <table style="width:100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="text-align:left; border-bottom:1px solid #e2e8f0;">
+                            <th style="padding:8px 6px;">Name</th>
+                            <th style="padding:8px 6px;">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tools-body"></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -1035,6 +1091,64 @@
 
         // Stats polling
         let statsTimer = null;
+        let logsSource = null; let logsPaused = false; let logsBuf = [];
+        function connectLogs() {
+            if (logsSource) return;
+            try {
+                logsSource = new EventSource('/dashboard/api/server-logs');
+                const box = document.getElementById('logs-box');
+                logsSource.onmessage = (e) => {
+                    if (logsPaused) return;
+                    try {
+                        const rec = JSON.parse(e.data);
+                        // push into local buffer (cap at 5000)
+                        logsBuf.push(rec);
+                        if (logsBuf.length > 5000) logsBuf.splice(0, logsBuf.length - 5000);
+                        // append if it matches current filters
+                        if (logMatches(rec)) {
+                            const line = formatLog(rec);
+                            const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+                            const div = document.createElement('div');
+                            div.textContent = line;
+                            box.appendChild(div);
+                            while (box.childNodes.length > 2000) box.removeChild(box.firstChild);
+                            if (atBottom) box.scrollTop = box.scrollHeight;
+                        }
+                    } catch {}
+                };
+                logsSource.onerror = () => { try { logsSource.close(); } catch {}; logsSource = null; setTimeout(connectLogs, 1500); };
+            } catch {}
+        }
+
+        function formatLog(rec) {
+            return `[${rec.ts}] [${String(rec.level||'').toUpperCase()}] ${rec.msg}`;
+        }
+        function logMatches(rec) {
+            const lvlSel = (document.getElementById('logs-level')?.value || 'all').toLowerCase();
+            const text = (document.getElementById('logs-filter')?.value || '').trim().toLowerCase();
+            if (lvlSel !== 'all') {
+                if (String(rec.level||'').toLowerCase() !== lvlSel) return false;
+            }
+            if (text) {
+                const line = `${rec.ts} ${rec.level} ${rec.msg}`.toLowerCase();
+                if (!line.includes(text)) return false;
+            }
+            return true;
+        }
+        function renderLogs() {
+            const box = document.getElementById('logs-box');
+            if (!box) return;
+            const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+            box.innerHTML = '';
+            for (const rec of logsBuf) {
+                if (!logMatches(rec)) continue;
+                const div = document.createElement('div');
+                div.textContent = formatLog(rec);
+                box.appendChild(div);
+                if (box.childNodes.length > 2000) break; // stop early
+            }
+            if (atBottom) box.scrollTop = box.scrollHeight;
+        }
         async function fetchAndRenderStats() {
             try {
                 const r = await fetch('/dashboard/api/mcp-stats');
@@ -1042,13 +1156,28 @@
                 const data = await r.json();
                 const services = Array.isArray(data.services) ? data.services : [];
                 const tbody = document.getElementById('stats-body');
+                const statusBadge = (st) => {
+                    const base = 'display:inline-block;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;'
+                    const color = st==='running' ? 'background:#def7ec;color:#03543f;border:1px solid #bcf0da;' : (st==='disabled' ? 'background:#f1f5f9;color:#1f2937;border:1px solid #e5e7eb;' : 'background:#fde8e8;color:#9b1c1c;border:1px solid #facdcd;');
+                    return `<span style="${base}${color}">${st}</span>`;
+                };
+                function rowActions(s) {
+                    if ((s.status === 'running' || s.status === 'error')) {
+                        const escName = s.name.replace(/'/g, "&#39;");
+                        const showBtn = s.status === 'running' ? `<button class="btn btn-inline" onclick="showServiceTools('${escName}')">Show tools</button>` : '';
+                        return `${showBtn} <button class="btn btn-inline" onclick="restartMcpService('${escName}')">Restart</button>`;
+                    }
+                    return '';
+                }
                 tbody.innerHTML = services.map(s => `
                     <tr style="border-bottom:1px solid #f1f5f9;">
                         <td style="padding:8px 6px; font-weight:600; color:#2d3748;">${s.name}</td>
+                        <td style="padding:8px 6px;">${statusBadge(s.status || 'unknown')}</td>
                         <td style="padding:8px 6px;">${s.calls}</td>
                         <td style="padding:8px 6px;">${formatBytes(s.bytes_out)}</td>
                         <td style="padding:8px 6px;">${formatBytes(s.bytes_in)}</td>
                         <td style="padding:8px 6px;">${s.last_call ? new Date(s.last_call).toLocaleString() : '—'}</td>
+                        <td style="padding:8px 6px;">${rowActions(s)}</td>
                     </tr>
                 `).join('');
                 document.getElementById('stats-error').style.display = 'none';
@@ -1067,6 +1196,64 @@
             return `${v.toFixed(1)} ${units[i]}`;
         }
 
+        // Restart single MCP service using latest config
+        async function restartMcpService(name) {
+            try {
+                const ok = await showConfirm(`Restart service "${name}"?`, { title: 'Restart Service', okText: 'Restart', cancelText: 'Cancel' });
+                if (!ok) return;
+                const r = await fetch('/dashboard/api/mcp-service/restart', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const data = await r.json().catch(()=>({}));
+                if (!r.ok) throw new Error(data.error || 'Restart failed');
+                showToast(`Service ${name} restarted`, 'success');
+                // Refresh stats shortly after
+                setTimeout(fetchAndRenderStats, 1200);
+            } catch (e) {
+                showToast(`Failed to restart ${name}`, 'error');
+            }
+        }
+
+        // Tools modal helpers
+        let toolsForService = '';
+        async function fetchTools(name) {
+            const r = await fetch(`/dashboard/api/mcp-service/tools?name=${encodeURIComponent(name)}`);
+            const data = await r.json().catch(()=>({}));
+            if (!r.ok) throw new Error(data.error || 'Failed to fetch tools');
+            return data;
+        }
+        async function showServiceTools(name) {
+            toolsForService = name;
+            const modal = document.getElementById('tools-modal');
+            const title = document.getElementById('tools-title');
+            const tbody = document.getElementById('tools-body');
+            const err = document.getElementById('tools-error');
+            title.textContent = `Service Tools — ${name}`;
+            tbody.innerHTML = '';
+            err.style.display = 'none';
+            modal.style.display = 'block';
+            try {
+                const data = await fetchTools(name);
+                if (!data.initialized) {
+                    err.textContent = 'Service not running or not initialized.';
+                    err.style.display = 'block';
+                    return;
+                }
+                const tools = Array.isArray(data.tools) ? data.tools : [];
+                if (tools.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="2" style="padding:8px 6px; color:#6b7280;">No tools available</td></tr>`;
+                } else {
+                    tbody.innerHTML = tools.map(t => `<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:8px 6px; font-weight:600; color:#2d3748;\">${t.name}</td><td style=\"padding:8px 6px;\">${t.description || ''}</td></tr>`).join('');
+                }
+            } catch (e) {
+                err.textContent = 'Failed to load tools';
+                err.style.display = 'block';
+            }
+        }
+        document.getElementById('tools-close')?.addEventListener('click', ()=>{ document.getElementById('tools-modal').style.display='none'; });
+        document.getElementById('tools-refresh')?.addEventListener('click', ()=>{ if (toolsForService) showServiceTools(toolsForService); });
+
         function section(title, inner) {
             return `
                 <div class="section">
@@ -1083,6 +1270,16 @@
                 <div class="field-group">
                     <label for="${id}">${label}</label>
                     <input type="text" id="${id}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${key}" value="${value || ''}">
+                </div>
+            `;
+        }
+        function inputTextarea(fileAlias, path, key, label, value) {
+            const id = `${fileAlias}-${path.replaceAll('/', '_')}-${key}`;
+            const val = (value || '').toString().replace(/</g,'&lt;');
+            return `
+                <div class="field-group">
+                    <label for="${id}">${label}</label>
+                    <textarea id="${id}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${key}">${val}</textarea>
                 </div>
             `;
         }
@@ -1120,6 +1317,22 @@
                     <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
                 </div>
             `).join('');
+            // Env items: accept object or array of {key,value}
+            const envObj = (svc.env && typeof svc.env === 'object' && !Array.isArray(svc.env)) ? svc.env : {};
+            const envArr = Array.isArray(svc.env) ? svc.env : Object.entries(envObj).map(([k,v])=>({key:k, value:v}));
+            const envItems = (envArr.length?envArr:[{key:'',value:''}]).map((ev,ei)=>`
+                <div class="array-item" data-index="${ei}">
+                    <div class="sub-field">
+                        <label>Key</label>
+                        <input type="text" name="mcp_services[${index}][env][${ei}][key]" data-file="${fileAlias}" data-yaml-path="mcp_services" data-yaml-key="mcp_services" value="${esc(ev.key||'')}" placeholder="ENV_KEY">
+                    </div>
+                    <div class="sub-field">
+                        <label>Value</label>
+                        <input type="text" name="mcp_services[${index}][env][${ei}][value]" data-file="${fileAlias}" data-yaml-path="mcp_services" data-yaml-key="mcp_services" value="${esc(ev.value||'')}" placeholder="value">
+                    </div>
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+                </div>
+            `).join('');
             const enabledChecked = (svc.enabled !== false && svc.enabled !== 'false') ? 'checked' : '';
             const title = esc(svc.name) || 'New Service';
             const nameInput = inputText(fileAlias, 'mcp_services', `name`, 'Service Name', esc(svc.name))
@@ -1148,9 +1361,17 @@
                             </div>
                             <button type="button" class="add-array-item" onclick="addArrayItem('mcp_services_${index}_options','${fileAlias}','mcp_services','mcp_services','mcp_services[${index}][options]')">Add Option</button>
                         </div>
-                        ${inputText(fileAlias, 'mcp_services', `install`, 'Install (single line)', esc(svc.install))
+                        <div class="field-group">
+                            <label>Environment Variables</label>
+                            <div class="array-field" id="mcp_services_${index}_env">
+                                ${envItems}
+                            </div>
+                            <button type="button" class="add-array-item" onclick="addEnvItem(${index})">Add Variable</button>
+                        </div>
+                        ${inputTextarea(fileAlias, 'mcp_services', `install`, 'Install (script, multiline OK)', esc(svc.install))
                             .replace('data-yaml-key="install"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
-                            .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][install]"`)}
+                            .replace('<textarea', `<textarea name="mcp_services[${index}][install]"`)}
+                        <div class="help-text">Runs as a shell script via <code>sh -c</code>. Lines execute sequentially.</div>
                         <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove Service</button>
                     </div>
                 </div>
@@ -1205,6 +1426,26 @@
             wrap.insertAdjacentHTML('beforeend', userItem('MCP', idx, {}));
         }
 
+        // Add env var row for a service
+        window.addEnvItem = function(serviceIndex) {
+            const container = document.getElementById(`mcp_services_${serviceIndex}_env`);
+            if (!container) return;
+            const idx = container.querySelectorAll('.array-item').length;
+            const html = `
+                <div class="array-item" data-index="${idx}">
+                    <div class="sub-field">
+                        <label>Key</label>
+                        <input type="text" name="mcp_services[${serviceIndex}][env][${idx}][key]" data-file="MCP" data-yaml-path="mcp_services" data-yaml-key="mcp_services" value="" placeholder="ENV_KEY">
+                    </div>
+                    <div class="sub-field">
+                        <label>Value</label>
+                        <input type="text" name="mcp_services[${serviceIndex}][env][${idx}][value]" data-file="MCP" data-yaml-path="mcp_services" data-yaml-key="mcp_services" value="" placeholder="value">
+                    </div>
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+                </div>`;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
         // Populate forms after auth
         renderForms();
 
@@ -1241,22 +1482,40 @@
             for (const [bkey, items] of complexBuckets.entries()) {
                 const [alias, ypath, ykey] = bkey.split('::');
                 const obj = alias === 'MCP' ? mcpObj : hydraObj;
+                const deepPattern = /\[(\d+)\]\[([^\]]+)\](?:\[(\d+)\])?(?:\[([^\]]+)\])?/;
                 const isComplexArray = items.some(it => /\[\d+\]\[[^\]]+\]/.test(it.name));
                 if (isComplexArray) {
                     const byIndex = {};
                     items.forEach(it => {
-                        const m = it.name.match(/\[(\d+)\]\[([^\]]+)\](?:\[(\d+)\])?/);
+                        const m = it.name.match(deepPattern);
                         if (!m) return;
                         const idx = parseInt(m[1]);
                         const sub = m[2];
                         const inner = m[3];
+                        const last = m[4];
                         if (!byIndex[idx]) byIndex[idx] = {};
-                        if (inner !== undefined) {
+                        if (inner !== undefined && last !== undefined) {
+                            // arr[idx][sub][inner][last] = value (e.g., env[][key|value])
+                            if (!byIndex[idx][sub]) byIndex[idx][sub] = [];
+                            if (!byIndex[idx][sub][inner]) byIndex[idx][sub][inner] = {};
+                            if (it.value && it.value.trim() !== '') byIndex[idx][sub][inner][last] = it.value;
+                        } else if (inner !== undefined) {
+                            // arr[idx][sub] is array of scalar values (e.g., options[])
                             if (!byIndex[idx][sub]) byIndex[idx][sub] = [];
                             if (it.value && it.value.trim() !== '') byIndex[idx][sub].push(it.value);
                         } else {
+                            // arr[idx][sub] is a scalar
                             if (it.value && it.value.trim() !== '') byIndex[idx][sub] = it.value;
                         }
+                    });
+                    // Compact sparse arrays
+                    Object.keys(byIndex).forEach(k => {
+                        const rec = byIndex[k];
+                        Object.keys(rec).forEach(sub => {
+                            if (Array.isArray(rec[sub])) {
+                                rec[sub] = rec[sub].filter(x => x != null && (typeof x !== 'object' || Object.keys(x).length > 0));
+                            }
+                        });
                     });
                     const arr = Object.keys(byIndex).sort((a,b)=>a-b).map(k => byIndex[k]);
                     // If path equals key (e.g., mcp_services/mcp_services), set at root key
@@ -1388,6 +1647,12 @@
             } else {
                 if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
             }
+            // Manage logs stream on Logs tab
+            if (name === 'logs') {
+                connectLogs();
+            } else {
+                if (logsSource) { try { logsSource.close(); } catch {}; logsSource = null; }
+            }
         }
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => activateTab(btn.dataset.tab));
@@ -1397,6 +1662,22 @@
             const activeBtn = document.querySelector('.tab-btn.active');
             if (activeBtn) activateTab(activeBtn.dataset.tab);
         })();
+
+        // Logs controls
+        document.getElementById('logs-pause')?.addEventListener('click', ()=>{ logsPaused = true; showToast('Logs paused', 'info', 1500); });
+        document.getElementById('logs-resume')?.addEventListener('click', ()=>{ logsPaused = false; showToast('Logs resumed', 'success', 1500); });
+        document.getElementById('logs-clear')?.addEventListener('click', ()=>{
+            const box = document.getElementById('logs-box');
+            if (box) box.innerHTML = '';
+        });
+        document.getElementById('logs-apply')?.addEventListener('click', renderLogs);
+        document.getElementById('logs-reset')?.addEventListener('click', ()=>{
+            const f = document.getElementById('logs-filter'); const l = document.getElementById('logs-level');
+            if (f) f.value = '';
+            if (l) l.value = 'all';
+            renderLogs();
+        });
+        document.getElementById('logs-filter')?.addEventListener('keyup', (e)=>{ if (e.key==='Enter') renderLogs(); });
         
         // Load users
         async function loadUsers() {

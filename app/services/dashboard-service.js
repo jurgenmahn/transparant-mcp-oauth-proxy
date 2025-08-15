@@ -39,16 +39,16 @@ export class DashboardService {
     setupStatsRoute() {
         this.router.get('/api/mcp-stats', this.requireAuth.bind(this), async (_req, res) => {
             try {
-                // Load enabled services from local.yaml
+                // Load services from local.yaml (track enabled/disabled)
                 const localPath = path.resolve(this.appPath + '/config/local.yaml');
-                let enabledNames = [];
+                let configured = [];
                 try {
                     const raw = await fs.readFile(localPath, 'utf8');
                     const cfg = yaml.parse(raw) || {};
                     const arr = Array.isArray(cfg.mcp_services) ? cfg.mcp_services : [];
-                    enabledNames = arr
-                        .filter(s => s && s.name && !(s.enabled === false || s.enabled === 'false'))
-                        .map(s => s.name);
+                    configured = arr
+                        .filter(s => s && s.name)
+                        .map(s => ({ name: s.name, enabled: !(s.enabled === false || s.enabled === 'false') }));
                 } catch {}
 
                 // Load statistics file
@@ -59,10 +59,26 @@ export class DashboardService {
                     stats = yaml.parse(txt) || { services: {} };
                 } catch {}
 
-                const out = enabledNames.map(name => {
-                    const rec = (stats.services && stats.services[name]) || {};
+                // Determine runtime status using launcher proxy if available
+                let runningSet = new Set();
+                try {
+                    const lp = this.mcpServerRef?.services?.launcherProxy;
+                    if (lp && lp.getServicesList) {
+                        const runtime = lp.getServicesList(); // { name: { initialized, ... } }
+                        runningSet = new Set(Object.keys(runtime || {}));
+                    } else if (lp && lp.processes) {
+                        runningSet = new Set([...lp.processes.keys()]);
+                    }
+                } catch {}
+
+                const out = configured.map(svc => {
+                    const rec = (stats.services && stats.services[svc.name]) || {};
+                    let status = 'error';
+                    if (!svc.enabled) status = 'disabled';
+                    else if (runningSet.has(svc.name)) status = 'running';
                     return {
-                        name,
+                        name: svc.name,
+                        status,
                         calls: Number(rec.calls || 0),
                         bytes_in: Number(rec.bytes_in || 0),
                         bytes_out: Number(rec.bytes_out || 0),
@@ -72,6 +88,50 @@ export class DashboardService {
                 res.json({ services: out });
             } catch (e) {
                 res.status(500).json({ error: 'Failed to load stats', detail: String(e?.message || e) });
+            }
+        });
+
+        // Restart a single MCP service (reload latest config before restart)
+        this.router.post('/api/mcp-service/restart', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const name = String(req.body?.name || '').trim();
+                if (!name) return res.status(400).json({ error: 'Missing service name' });
+                const lp = this.mcpServerRef?.services?.launcherProxy;
+                if (!lp) return res.status(500).json({ error: 'Launcher proxy not available' });
+
+                // Reload latest config and parsed services
+                await lp.loadConfig();
+                lp.services = await lp.parseServices(lp.config.mcp_services || []);
+
+                // If not enabled in config, report disabled
+                const defined = Array.isArray(lp.config.mcp_services) ? lp.config.mcp_services.find(s=>s?.name===name) : null;
+                if (!defined) return res.status(404).json({ error: 'Service not configured' });
+                const enabled = !(defined.enabled === false || defined.enabled === 'false');
+                if (!enabled) return res.status(400).json({ error: 'Service is disabled in config' });
+
+                const ok = await lp.restartService(name);
+                if (!ok) return res.status(500).json({ error: 'Restart failed' });
+                res.json({ success: true });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to restart service', detail: String(e?.message || e) });
+            }
+        });
+
+        // List realtime available tools for a running MCP service
+        this.router.get('/api/mcp-service/tools', this.requireAuth.bind(this), async (req, res) => {
+            try {
+                const name = String(req.query?.name || '').trim();
+                if (!name) return res.status(400).json({ error: 'Missing service name' });
+                const lp = this.mcpServerRef?.services?.launcherProxy;
+                if (!lp) return res.status(500).json({ error: 'Launcher proxy not available' });
+                const svc = lp.processes?.get ? lp.processes.get(name) : null;
+                if (!svc || !svc.initialized) {
+                    return res.json({ service: name, initialized: false, tools: [] });
+                }
+                const tools = Array.isArray(svc.tools) ? svc.tools.map(t => ({ name: t.name, description: t.description })) : [];
+                res.json({ service: name, initialized: true, tools });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to list tools', detail: String(e?.message || e) });
             }
         });
     }
@@ -108,6 +168,36 @@ export class DashboardService {
 
         // Logout
         this.router.post('/logout', (req, res) => { req.session.destroy(() => res.json({ success: true })); });
+
+        // SSE server logs stream
+        this.router.get('/api/server-logs', this.requireAuth.bind(this), (req, res) => {
+            try {
+                if (!this.mcpServerRef?.logEmitter) {
+                    return res.status(500).json({ error: 'Log stream unavailable' });
+                }
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.flushHeaders?.();
+
+                // Send recent buffer first
+                const buf = Array.isArray(this.mcpServerRef.logBuffer) ? this.mcpServerRef.logBuffer : [];
+                for (const rec of buf) {
+                    res.write(`data: ${JSON.stringify(rec)}\n\n`);
+                }
+
+                const onLog = (rec) => {
+                    try { res.write(`data: ${JSON.stringify(rec)}\n\n`); } catch {}
+                };
+                this.mcpServerRef.logEmitter.on('log', onLog);
+
+                req.on('close', () => {
+                    this.mcpServerRef.logEmitter.off('log', onLog);
+                });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to open log stream' });
+            }
+        });
 
         // Admin: Flush full Redis DB/cache (FLUSHALL)
         this.router.post('/api/admin/redis-flush', this.requireAuth.bind(this), async (_req, res) => {

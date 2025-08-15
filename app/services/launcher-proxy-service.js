@@ -270,6 +270,26 @@ export class LauncherProxyService {
                         fullCommand = [...commandParts, ...serviceConfig.options];
                     }
 
+                    // Normalize env vars if present (accept array of {key,value} or object map)
+                    let envMap = undefined;
+                    if (serviceConfig.env) {
+                        if (Array.isArray(serviceConfig.env)) {
+                            envMap = {};
+                            for (const pair of serviceConfig.env) {
+                                if (!pair) continue;
+                                const k = (pair.key || pair.name || '').toString();
+                                if (!k) continue;
+                                envMap[k] = pair.value != null ? String(pair.value) : '';
+                            }
+                        } else if (typeof serviceConfig.env === 'object') {
+                            envMap = {};
+                            for (const [k, v] of Object.entries(serviceConfig.env)) {
+                                if (!k) continue;
+                                envMap[k] = v != null ? String(v) : '';
+                            }
+                        }
+                    }
+
                     // Store install commands if present - handle different formats
                     let installCommands = null;
                     if (serviceConfig.install) {
@@ -291,7 +311,8 @@ export class LauncherProxyService {
 
                     services[serviceConfig.name] = {
                         command: fullCommand,
-                        install: installCommands
+                        install: installCommands,
+                        env: envMap
                     };
                 }
             }
@@ -423,8 +444,13 @@ export class LauncherProxyService {
         // Get the actual command to run
         const command = serviceConfig.command || serviceConfig;
 
+        const spawnEnv = { ...process.env };
+        if (serviceConfig && serviceConfig.env && typeof serviceConfig.env === 'object') {
+            Object.assign(spawnEnv, serviceConfig.env);
+        }
         const proc = spawn(command[0], command.slice(1), {
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: spawnEnv
         });
 
         const service = {
