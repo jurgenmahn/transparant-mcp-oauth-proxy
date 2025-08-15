@@ -145,6 +145,28 @@
             height: 100px;
             resize: vertical;
         }
+        /* Ensure array items and freeform inputs get the same styling */
+        .array-item input,
+        .array-item select,
+        .array-item textarea,
+        .array-field > input,
+        .array-field > select,
+        .array-field > textarea {
+            width: 85%;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            background: #fff;
+        }
+        .array-item input:focus,
+        .array-item select:focus,
+        .array-item textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
         
         .array-field {
             border: 1px solid #e2e8f0;
@@ -162,7 +184,7 @@
             position: relative;
         }
 
-        .array-item:has(.sub-field) {
+        .array-item:has(.field-group) {
         border: 2px double #000;
         margin-top: 30px;
         }
@@ -239,6 +261,7 @@
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(56, 161, 105, 0.3);
         }
+
         
         .required {
             color: #e53e3e;
@@ -392,11 +415,13 @@
         
         .modal-content {
             background: white;
-            margin: 10% auto;
+            margin: 6% auto; /* place a bit higher on the screen */
             padding: 0;
             border-radius: 12px;
             width: 90%;
-            max-width: 500px;
+            max-width: 900px; /* allow wider preview */
+            max-height: 80vh; /* keep within viewport */
+            overflow: auto; /* scroll if content exceeds */
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
         }
         
@@ -409,6 +434,8 @@
         
         .modal-body {
             padding: 20px;
+            max-height: 65vh; /* ensure body fits */
+            overflow: auto;
         }
         
         .close {
@@ -457,12 +484,7 @@
             background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
         }
 
-        /* Preview diff styles */
-        .diff-file { margin-bottom: 20px; }
-        .diff-header { font-weight: 600; margin-bottom: 8px; }
-        .diff-changes { font-size: 13px; color: #4a5568; margin-bottom: 10px; }
-        .diff-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .diff-col pre { background:#f8f9fa; border:1px solid #e2e8f0; border-radius:6px; padding:10px; max-height:300px; overflow:auto; }
+        /* (Preview button and diff styles removed) */
     </style>
 </head>
 <body>
@@ -515,16 +537,15 @@
                 <!-- Configuration Form across tabs (only config tabs inside the form) -->
                 <form id="config-form" novalidate>
                     <div class="tab-pane active" id="tab-general">
-                        {{GENERAL_FORM}}
+                        <!-- General form renders here after auth -->
                     </div>
                     <div class="tab-pane" id="tab-mcp">
-                        {{MCP_FORM}}
+                        <div id="mcp-form"></div>
                     </div>
                     <div class="tab-pane" id="tab-hydra">
-                        {{HYDRA_FORM}}
+                        <div id="hydra-form"></div>
                     </div>
                     <div style="display:flex; gap:10px; justify-content:center; margin-top:20px;">
-                        <button type="button" id="preview-btn" class="logout-btn">Preview Changes</button>
                         <button type="submit" class="submit-btn">Save Configuration</button>
                     </div>
                 </form>
@@ -592,16 +613,7 @@
         </div>
     </div>
     
-    <!-- Preview Changes Modal -->
-    <div id="preview-modal" class="modal">
-        <div class="modal-content" style="max-width: 900px;">
-            <div class="modal-header">
-                <span class="close" id="preview-close">&times;</span>
-                <h2>Preview Changes</h2>
-            </div>
-            <div class="modal-body" id="preview-body"></div>
-        </div>
-    </div>
+    <!-- (Preview modal removed) -->
     
     <script>
         let currentUserEmail = '';
@@ -617,6 +629,8 @@
                         document.getElementById('current-user-email').textContent = data.email;
                         document.getElementById('dashboard-section').style.display = 'block';
                         document.getElementById('auth-section').style.display = 'none';
+                        // Populate forms and users once authenticated
+                        renderForms();
                         loadUsers();
                         return;
                     }
@@ -682,26 +696,383 @@
         }
         loadServerVersion();
 
-        // Preview changes
-        document.getElementById('preview-btn').addEventListener('click', async () => {
+        // Render hardcoded forms from actual YAML files (no dynamic dashboard schema)
+        async function renderForms() {
             try {
-                const form = document.getElementById('config-form');
-                const formData = new FormData(form);
-                const resp = await fetch('/dashboard/api/preview-config', {
-                    method: 'POST',
-                    body: formData
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    alert(err.error || 'Failed to build preview');
-                    return;
-                }
-                const data = await resp.json();
-                renderPreviewModal(data);
-            } catch (err) {
-                alert('Connection error building preview');
+                const filesResp = await fetch('/dashboard/api/files-data');
+                if (!filesResp.ok) return;
+                const filesData = await filesResp.json();
+                const files = filesData.files || [];
+                // Map aliases to paths and originals for building payloads
+                window._fileMap = {
+                    MCP: files.find(f => /local\.yaml$/.test(f.path) || /MCP Server configuration/.test(f.name)),
+                    HYDRA: files.find(f => /hydra\/.+config\.yaml$/.test(f.path) || /Hydra configuration/.test(f.name))
+                };
+                const mcp = window._fileMap.MCP;
+                const hydra = window._fileMap.HYDRA;
+                if (mcp) renderMcpForm(mcp);
+                if (hydra) renderHydraForm(hydra);
+                attachDomainValidationListeners();
+                validateDomainConsistency();
+            } catch (e) {
+                console.error('Failed to render forms:', e);
             }
-        });
+        }
+
+        function attachDomainValidationListeners() {
+            const ids = [
+                'MCP-hydra-public_url',
+                'HYDRA-urls_self-issuer',
+                'HYDRA-urls-login',
+                'HYDRA-urls-consent',
+                'HYDRA-webfinger_oidc_discovery-client_registration_url'
+            ];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('input', validateDomainConsistency);
+            });
+        }
+
+        function getInputValue(id) {
+            const el = document.getElementById(id);
+            return el ? String(el.value || '').trim() : '';
+        }
+
+        function baseDomainFromHost(host) {
+            if (!host) return '';
+            host = host.toLowerCase();
+            if (host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
+            const parts = host.split('.');
+            if (parts.length <= 2) return host;
+            return parts.slice(-2).join('.');
+        }
+
+        function baseDomainFromUrl(u) {
+            try {
+                const url = new URL(u);
+                return baseDomainFromHost(url.hostname);
+            } catch {
+                return '';
+            }
+        }
+
+        function validateDomainConsistency() {
+            const values = {
+                hydraPublicUrl: getInputValue('MCP-hydra-public_url'),
+                issuer: getInputValue('HYDRA-urls_self-issuer'),
+                login: getInputValue('HYDRA-urls-login'),
+                consent: getInputValue('HYDRA-urls-consent'),
+                clientReg: getInputValue('HYDRA-webfinger_oidc_discovery-client_registration_url')
+            };
+            const domains = new Set();
+            Object.entries(values).forEach(([k, v]) => {
+                const bd = baseDomainFromUrl(v);
+                if (bd) domains.add(bd);
+            });
+            const warnEl = document.getElementById('domain-warning');
+            if (!warnEl) return;
+            if (domains.size > 1) {
+                warnEl.style.display = 'block';
+                warnEl.textContent = 'Warning: The Hydra-related URLs span multiple base domains (' + Array.from(domains).join(', ') + '). Consider using a single base domain for Hydra Public URL, Issuer, Login URL, Consent URL, and Client Registration URL.';
+            } else {
+                warnEl.style.display = 'none';
+                warnEl.textContent = '';
+            }
+        }
+
+        function esc(s) { return (s == null ? '' : String(s)); }
+
+        function renderMcpForm(file) {
+            const o = file.obj || {};
+            const hydra = o.hydra || {};
+            const server = o.server || {};
+            const oauth = o.oauth || {};
+            const cors = o.cors || {};
+            const services = Array.isArray(o.mcp_services) ? o.mcp_services : [];
+            const users = Array.isArray(o.users) ? o.users : [];
+
+            // Render General settings into the General tab (with domain warning placeholder)
+            const generalHtml = `
+                <div id="domain-warning" class="error" style="display:none;"></div>
+                ${section('General', `
+                    ${inputText('MCP', 'hydra', 'public_url', 'Hydra Public URL', esc(hydra.public_url))}
+                    ${inputText('MCP', '', 'server_port', 'Server Port', esc(o.server_port))}
+                    ${select('MCP', 'server', 'log_level', 'Server Log Level', esc(server.log_level), ['info','debug'])}
+                    ${inputText('MCP', 'oauth', 'session_secret', 'Session Secret', esc(oauth.session_secret))}
+                `)}
+            `;
+            const generalPane = document.getElementById('tab-general');
+            if (generalPane) generalPane.innerHTML = generalHtml;
+
+            // Build remaining MCP sections for the MCP tab
+            const form = [];
+            
+            form.push(section('OAuth Allowed Redirect Domains', arraySimple('MCP', 'oauth', 'allowed_redirect_domains', corsArray(oauth.allowed_redirect_domains))));
+            form.push(section('CORS Allowed Origins', arraySimple('MCP', 'cors', 'allowed_origins', corsArray(cors.allowed_origins))));
+
+            // MCP Services
+            const svcItems = services.map((svc, i) => serviceItem('MCP', i, svc)).join('');
+            form.push(`
+                <div class="section">
+                    <div class="section-header">MCP Services</div>
+                    <div class="section-content expanded">
+                        <div id="mcp-services">${svcItems || serviceItem('MCP', 0, {})}</div>
+                        <button type="button" class="add-array-item" onclick="addMcpService()">Add Service</button>
+                    </div>
+                </div>
+            `);
+
+            // MCP Users (email list; preserves existing password_hash on save)
+            const userItems = users.map((u, i) => userItem('MCP', i, u)).join('');
+            form.push(`
+                <div class="section">
+                    <div class="section-header">MCP Users</div>
+                    <div class="section-content expanded">
+                        <div id="mcp-users">${userItems || userItem('MCP', 0, {})}</div>
+                        <button type="button" class="add-array-item" onclick="addMcpUser()">Add User</button>
+                    </div>
+                </div>
+            `);
+
+            document.getElementById('mcp-form').innerHTML = form.join('');
+        }
+
+        function renderHydraForm(file) {
+            const o = file.obj || {};
+            const urls = o.urls || { self: {} };
+            const log = o.log || {};
+            const webfinger = (o.webfinger || {});
+            const secrets = (o.secrets || {});
+
+            const form = [];
+            form.push(section('URLs', `
+                ${inputText('HYDRA', 'urls/self', 'issuer', 'Issuer', esc(urls.self?.issuer))}
+                ${inputText('HYDRA', 'urls', 'login', 'Login URL', esc(urls.login))}
+                ${inputText('HYDRA', 'urls', 'consent', 'Consent URL', esc(urls.consent))}
+            `));
+            form.push(section('Log', `
+                ${select('HYDRA', 'log', 'level', 'Log Level', esc(log.level), ['info','debug','warn','error'])}
+                ${select('HYDRA', 'log', 'leak_sensitive_values', 'Leak Sensitive Values', esc(String(log.leak_sensitive_values)), ['true','false'])}
+            `));
+            form.push(section('Secrets', arraySimple('HYDRA', 'secrets', 'system', corsArray(secrets.system))));
+            form.push(section('Webfinger', `
+                ${inputText('HYDRA', 'webfinger/oidc_discovery', 'client_registration_url', 'Client Registration URL', esc(webfinger.oidc_discovery?.client_registration_url))}
+            `));
+
+            document.getElementById('hydra-form').innerHTML = form.join('');
+        }
+
+        function section(title, inner) {
+            return `
+                <div class="section">
+                    <div class="section-header">${title}</div>
+                    <div class="section-content expanded">
+                        ${inner}
+                    </div>
+                </div>
+            `;
+        }
+        function inputText(fileAlias, path, key, label, value) {
+            const id = `${fileAlias}-${path.replaceAll('/', '_')}-${key}`;
+            return `
+                <div class="field-group">
+                    <label for="${id}">${label}</label>
+                    <input type="text" id="${id}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${key}" value="${value || ''}">
+                </div>
+            `;
+        }
+        function select(fileAlias, path, key, label, value, options) {
+            const id = `${fileAlias}-${path.replaceAll('/', '_')}-${key}`;
+            return `
+                <div class="field-group">
+                    <label for="${id}">${label}</label>
+                    <select id="${id}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${key}">
+                        ${options.map(opt => `<option value="${opt}" ${String(value)===String(opt)?'selected':''}>${opt}</option>`).join('')}
+                    </select>
+                </div>
+            `;
+        }
+        function arraySimple(fileAlias, path, key, arr) {
+            const containerId = `${fileAlias}-${path.replaceAll('/', '_')}-${key}-container`;
+            const items = (arr||['']).map((v,i)=>`
+                <div class="array-item" data-index="${i}">
+                    <input type="text" name="${fileAlias}-${key}[${i}]" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${key}" value="${esc(v)}" placeholder="Enter value">
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+                </div>
+            `).join('');
+            return `
+                <div class="array-field" id="${containerId}">
+                    ${items}
+                </div>
+                <button type="button" class="add-array-item" onclick="addArrayItem('${containerId}', '${fileAlias}', '${path}', '${key}')">Add Item</button>
+            `;
+        }
+        function serviceItem(fileAlias, index, svc) {
+            const opts = Array.isArray(svc.options)? svc.options : [];
+            const optItems = (opts.length?opts:['']).map((ov,oi)=>`
+                <div class="array-item" data-index="${oi}">
+                    <input type="text" name="mcp_services[${index}][options][${oi}]" data-file="${fileAlias}" data-yaml-path="mcp_services" data-yaml-key="mcp_services" value="${esc(ov)}" placeholder="Option value">
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+                </div>
+            `).join('');
+            return `
+                <div class="array-item" data-index="${index}">
+                    ${inputText(fileAlias, 'mcp_services', `name`, 'Service Name', esc(svc.name))
+                        .replace('data-yaml-key="name"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][name]"`)}
+                    ${inputText(fileAlias, 'mcp_services', `startup_command`, 'Startup Command', esc(svc.startup_command))
+                        .replace('data-yaml-key="startup_command"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][startup_command]"`)}
+                    <div class="field-group">
+                        <label>Options</label>
+                        <div class="array-field" id="mcp_services_${index}_options">
+                            ${optItems}
+                        </div>
+                        <button type="button" class="add-array-item" onclick="addArrayItem('mcp_services_${index}_options','${fileAlias}','mcp_services','mcp_services[${index}][options]')">Add Option</button>
+                    </div>
+                    ${inputText(fileAlias, 'mcp_services', `install`, 'Install (single line)', esc(svc.install))
+                        .replace('data-yaml-key="install"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][install]"`)}
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove Service</button>
+                </div>
+            `;
+        }
+        function userItem(fileAlias, index, u) {
+            const email = u.email || u.name || '';
+            const password = u.password || '';
+            return `
+                <div class="array-item" data-index="${index}">
+                    <div class="sub-field">
+                        <label>Email</label>
+                        <input type="text" name="users[${index}][name]" data-file="${fileAlias}" data-yaml-path="users" data-yaml-key="users" value="${esc(email)}" placeholder="Email">
+                    </div>
+                    <div class="sub-field">
+                        <label>Password</label>
+                        <input type="password" name="users[${index}][password]" data-file="${fileAlias}" data-yaml-path="users" data-yaml-key="users" value="${esc(password)}" placeholder="Password">
+                    </div>
+                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+                </div>
+            `;
+        }
+        function corsArray(a) { return Array.isArray(a) ? a : []; }
+
+        // Array helpers for hardcoded UI
+        window.addArrayItem = function(containerId, fileAlias, path, keyPrefix) {
+            const container = document.getElementById(containerId);
+            const idx = container.querySelectorAll('.array-item').length;
+            const div = document.createElement('div');
+            div.className = 'array-item';
+            div.setAttribute('data-index', idx);
+            div.innerHTML = `
+                <input type="text" name="${keyPrefix ? keyPrefix : (containerId + '['+idx+']')}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${containerId.includes('allowed')? (containerId.includes('redirect')?'allowed_redirect_domains':'allowed_origins'): 'system'}" value="" placeholder="Enter value">
+                <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
+            `;
+            container.appendChild(div);
+        }
+        window.addMcpService = function() {
+            const wrap = document.getElementById('mcp-services');
+            const idx = wrap.querySelectorAll('> .array-item').length;
+            wrap.insertAdjacentHTML('beforeend', serviceItem('MCP', idx, {}));
+        }
+        window.addMcpUser = function() {
+            const wrap = document.getElementById('mcp-users');
+            const idx = wrap.querySelectorAll('> .array-item').length;
+            wrap.insertAdjacentHTML('beforeend', userItem('MCP', idx, {}));
+        }
+
+        // Populate forms after auth
+        renderForms();
+
+        // Build full-file payloads from hardcoded form
+        async function buildFullFilePayloadsFromForm() {
+            const payloads = [];
+            const files = window._fileMap || {};
+            const mcp = files.MCP; const hydra = files.HYDRA;
+            // Start with originals to preserve unknown keys
+            const mcpObj = JSON.parse(JSON.stringify(mcp?.obj || {}));
+            const hydraObj = JSON.parse(JSON.stringify(hydra?.obj || {}));
+
+            const inputs = document.querySelectorAll('#config-form input, #config-form select, #config-form textarea');
+            const complexBuckets = new Map();
+            inputs.forEach(el => {
+                const alias = el.getAttribute('data-file');
+                const ypath = el.getAttribute('data-yaml-path') || '';
+                const ykey = el.getAttribute('data-yaml-key');
+                if (!alias || !ykey) return;
+                const obj = alias === 'MCP' ? mcpObj : alias === 'HYDRA' ? hydraObj : null;
+                if (!obj) return;
+                const name = el.name || '';
+                const isComplex = /\[\d+\]/.test(name);
+                if (isComplex) {
+                    const bkey = `${alias}::${ypath}::${ykey}`;
+                    if (!complexBuckets.has(bkey)) complexBuckets.set(bkey, []);
+                    complexBuckets.get(bkey).push({ name, value: el.value });
+                } else {
+                    setValueAtPath(obj, ypath.split('/').filter(Boolean), ykey, coerceValue(el));
+                }
+            });
+
+            // Rebuild arrays
+            for (const [bkey, items] of complexBuckets.entries()) {
+                const [alias, ypath, ykey] = bkey.split('::');
+                const obj = alias === 'MCP' ? mcpObj : hydraObj;
+                const isComplexArray = items.some(it => /\[\d+\]\[[^\]]+\]/.test(it.name));
+                if (isComplexArray) {
+                    const byIndex = {};
+                    items.forEach(it => {
+                        const m = it.name.match(/\[(\d+)\]\[([^\]]+)\](?:\[(\d+)\])?/);
+                        if (!m) return;
+                        const idx = parseInt(m[1]);
+                        const sub = m[2];
+                        const inner = m[3];
+                        if (!byIndex[idx]) byIndex[idx] = {};
+                        if (inner !== undefined) {
+                            if (!byIndex[idx][sub]) byIndex[idx][sub] = [];
+                            if (it.value && it.value.trim() !== '') byIndex[idx][sub].push(it.value);
+                        } else {
+                            if (it.value && it.value.trim() !== '') byIndex[idx][sub] = it.value;
+                        }
+                    });
+                    const arr = Object.keys(byIndex).sort((a,b)=>a-b).map(k => byIndex[k]);
+                    // If path equals key (e.g., mcp_services/mcp_services), set at root key
+                    const pathArr = ypath.split('/').filter(Boolean);
+                    const targetPath = (pathArr.length === 1 && pathArr[0] === ykey) ? [] : pathArr;
+                    setValueAtPath(obj, targetPath, ykey, arr);
+                } else {
+                    const simple = [];
+                    items.forEach(it => {
+                        const m = it.name.match(/\[(\d+)\]$/);
+                        if (m && it.value && it.value.trim() !== '') simple.push(it.value);
+                    });
+                    const pathArr = ypath.split('/').filter(Boolean);
+                    const targetPath = (pathArr.length === 1 && pathArr[0] === ykey) ? [] : pathArr;
+                    setValueAtPath(obj, targetPath, ykey, simple);
+                }
+            }
+
+            if (mcp) payloads.push({ path: mcp.path, obj: mcpObj });
+            if (hydra) payloads.push({ path: hydra.path, obj: hydraObj });
+            return payloads;
+        }
+
+        function setValueAtPath(obj, pathArr, key, value) {
+            let cur = obj;
+            for (const seg of pathArr) {
+                if (!cur[seg] || typeof cur[seg] !== 'object') cur[seg] = {};
+                cur = cur[seg];
+            }
+            cur[key] = value;
+        }
+        function coerceValue(el) {
+            const v = el.value;
+            if (v === 'true') return true;
+            if (v === 'false') return false;
+            if (/^-?\d+$/.test(v)) return parseInt(v,10);
+            if (/^-?\d+\.\d+$/.test(v)) return parseFloat(v);
+            return v;
+        }
+
+        // (Preview click handler removed)
 
         // Handle reload all services
         document.getElementById('reload-config-btn').addEventListener('click', async () => {
@@ -734,48 +1105,28 @@
             }
         });
         
-        // Handle config save
+        // Handle config save - client assembles and posts full files per request
         document.getElementById('config-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            console.log('📝 Form submission started...');
-            
-            const formData = new FormData(e.target);
-            console.log('📋 Form data entries:', Array.from(formData.entries()).length);
-            
             try {
-                console.log('🌐 Sending request to /dashboard/save-config...');
-                const response = await fetch('/dashboard/save-config', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                console.log(`📊 Response status: ${response.status}`);
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    console.log('✅ Save successful:', result);
-                    
-                    document.getElementById('save-message').textContent = 'Configuration saved successfully!';
-                    document.getElementById('save-message').style.display = 'block';
-                    document.getElementById('save-error').style.display = 'none';
-                    
-                    // Check if any services need restart
-                    if (result.servicesNeedingRestart && result.servicesNeedingRestart.length > 0) {
-                        console.log(`🔄 ${result.servicesNeedingRestart.length} services need restart`);
-                        await restartServicesSilently(result.servicesNeedingRestart);
-                    } else {
-                        console.log('ℹ️ No services need restart');
+                const payloads = await buildFullFilePayloadsFromForm();
+                for (const p of payloads) {
+                    const resp = await fetch('/dashboard/save-full', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(p)
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        throw new Error(err.error || 'Save failed');
                     }
-                } else {
-                    const error = await response.json();
-                    console.log('❌ Save failed:', error);
-                    document.getElementById('save-error').textContent = error.error || 'Failed to save configuration';
-                    document.getElementById('save-error').style.display = 'block';
-                    document.getElementById('save-message').style.display = 'none';
                 }
+                document.getElementById('save-message').textContent = 'Configuration saved successfully!';
+                document.getElementById('save-message').style.display = 'block';
+                document.getElementById('save-error').style.display = 'none';
             } catch (error) {
-                console.error('💥 Form submission error:', error);
-                document.getElementById('save-error').textContent = 'Connection error: ' + error.message;
+                console.error('💥 Save error:', error);
+                document.getElementById('save-error').textContent = 'Save error: ' + error.message;
                 document.getElementById('save-error').style.display = 'block';
                 document.getElementById('save-message').style.display = 'none';
             }
@@ -947,8 +1298,8 @@
             }
         }
         
-        // Array management functions (keep existing functionality)
-        function addArrayItem(fieldName) {
+        // Array management functions (legacy helper retained under new name)
+        function addArrayItemLegacy(fieldName) {
             const container = document.getElementById(fieldName + '_container');
             const existingItems = container.querySelectorAll('.array-item');
             const newIndex = existingItems.length;
@@ -1063,48 +1414,7 @@
             }
         }
 
-        // Preview modal helpers
-        function renderPreviewModal(data) {
-            const files = Array.isArray(data.files) ? data.files : [];
-            const body = document.getElementById('preview-body');
-            if (files.length === 0) {
-                body.innerHTML = '<p>No changes detected.</p>';
-            } else {
-                body.innerHTML = files.map(f => {
-                    const changeList = (f.changes || []).map(c => `• ${c.path}`).join('<br>');
-                    return `
-                        <div class="diff-file">
-                            <div class="diff-header">${f.filePath}</div>
-                            <div class="diff-changes">${changeList || 'No field-level changes detected'}</div>
-                            <div class="diff-container">
-                                <div class="diff-col"><div><strong>Before</strong></div><pre>${escapeHtml(f.originalText || '')}</pre></div>
-                                <div class="diff-col"><div><strong>After</strong></div><pre>${escapeHtml(f.newText || '')}</pre></div>
-                            </div>
-                        </div>`;
-                }).join('');
-            }
-            document.getElementById('preview-modal').style.display = 'block';
-        }
-
-        function escapeHtml(str) {
-            return String(str).replace(/[&<>"']/g, function (s) {
-                if (s === '&') return '&amp;';
-                if (s === '<') return '&lt;';
-                if (s === '>') return '&gt;';
-                if (s === '"') return '&quot;';
-                if (s === "'") return '&#39;';
-                return s;
-            });
-        }
-
-        document.getElementById('preview-close').addEventListener('click', () => {
-            document.getElementById('preview-modal').style.display = 'none';
-        });
-        window.addEventListener('click', (e) => {
-            if (e.target === document.getElementById('preview-modal')) {
-                document.getElementById('preview-modal').style.display = 'none';
-            }
-        });
+        // (Preview modal helpers removed)
         
         // Use event delegation for collapsible sections
         document.addEventListener('click', function(e) {
@@ -1176,37 +1486,7 @@
             }
         }
         
-        // Restart a specific service
-        async function restartService(service) {
-            try {
-                const response = await fetch('/dashboard/api/restart-service', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        serviceName: service.name,
-                        restartCommand: service.restartCommand
-                    })
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    
-                    if (result.isDashboardRestart) {
-                        alert(`${service.name} is restarting. The dashboard will reload in 5 seconds.`);
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 5000);
-                    } else {
-                        alert(`${service.name} restarted successfully!`);
-                    }
-                } else {
-                    const error = await response.json();
-                    alert(`Failed to restart ${service.name}: ${error.error}`);
-                }
-            } catch (error) {
-                alert(`Connection error while restarting ${service.name}`);
-            }
-        }
+        // Restart helpers removed per request; header button remains if you want manual restarts
 
         // Silently restart services after save (no confirmation prompts)
         async function restartServicesSilently(services) {
