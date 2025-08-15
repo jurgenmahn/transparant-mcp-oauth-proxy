@@ -88,7 +88,7 @@ for script in $SCRIPTS; do
       # Create package from changes
       log "Creating package: $(basename "$target_package")"
       if find / -newer /tmp/before_install 2>/dev/null | \
-         grep -v -E '^/(proc|sys|dev|tmp)' | \
+         grep -v -E '^/(proc|sys|dev|tmp|var\/log|var\/cache|var\/lib\/apt)' | \
          tar -czf "$target_package" -T - 2>/dev/null; then
           log "Package created successfully"
           SUCCESS_COUNT=$((SUCCESS_COUNT + 1))

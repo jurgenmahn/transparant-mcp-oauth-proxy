@@ -57,11 +57,12 @@ FROM root as custom-script-installer
 COPY ./custom-install-scripts /custom-install-scripts
 COPY ./conf/scripts/install-custom-scripts.sh /
 
-# run user defined custom scripts and capture all changes
+# run user defined custom scripts and capture all changes. /install-packages is cached with an explicit id so on subsequent builds the cache still exists.
+# this to avoid if one custom script changes all packages have to be rebuilded.
 RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=tmpfs,target=/var/lib/apt/lists/ \
     --mount=type=tmpfs,target=/tmp \
-    --mount=type=cache,target=/install-packages,id=mcp-custom-script-installer \
+    --mount=type=cache,target=/install-packages,id=mcp-custom-script-installer-cache \
     chmod +x /install-custom-scripts.sh && \
     /install-custom-scripts.sh
 
