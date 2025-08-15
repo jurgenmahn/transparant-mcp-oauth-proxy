@@ -22,6 +22,25 @@ class MCPServer {
         this.loadConfig();
     }
 
+    // Reload config and restart only launcher proxy + OAuth services without restarting dashboard
+    async reloadMcpAndOAuth() {
+        console.log('🔄 Reloading MCP and OAuth services from updated config...');
+        // Reload top-level config (for port etc., but we will not restart HTTP server)
+        try { this.loadConfig(); } catch {}
+
+        // Reload Unified OAuth Service
+        if (this.services?.unifiedOAuth && typeof this.services.unifiedOAuth.reloadFromConfig === 'function') {
+            await this.services.unifiedOAuth.reloadFromConfig();
+            console.log('✅ Unified OAuth reloaded');
+        }
+
+        // Reload Launcher Proxy Service (restart MCP child processes from config)
+        if (this.services?.launcherProxy && typeof this.services.launcherProxy.reloadFromConfig === 'function') {
+            await this.services.launcherProxy.reloadFromConfig();
+            console.log('✅ Launcher Proxy reloaded');
+        }
+    }
+
     loadConfig() {
         try {
             this.config = YAML.parse(fs.readFileSync(this.appPath + '/config/local.yaml', 'utf-8'));
@@ -412,7 +431,7 @@ class MCPServer {
         console.log('📋 Creating services...');
         console.log('Application path: ', this.appPath);
 
-        this.services.dashboard = new DashboardService(this.appPath);
+        this.services.dashboard = new DashboardService(this.appPath, this);
         this.services.launcherProxy = new LauncherProxyService(this.appPath);
         this.services.unifiedOAuth = new UnifiedOAuthService(this.appPath);
 

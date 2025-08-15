@@ -134,6 +134,39 @@ export class UnifiedOAuthService {
         console.log('Unified OAuth Service initialized');
     }
 
+    // Reload configuration and reinitialize dependencies without recreating router
+    async reloadFromConfig() {
+        console.log('[OAuth] 🔁 Reloading configuration...');
+        try {
+            await this.shutdown();
+        } catch {}
+        this.loadConfig();
+        this.normalizeConfig();
+        await this.connectRedis();
+        console.log('[OAuth] ✅ Reload complete');
+    }
+
+    // Flush all Redis data (cache/session)
+    async flushAllRedis() {
+        try {
+            if (!this.redisClient) {
+                await this.connectRedis();
+            }
+            if (!this.redisClient) throw new Error('Redis client unavailable');
+            if (typeof this.redisClient.flushAll === 'function') {
+                await this.redisClient.flushAll();
+            } else if (typeof this.redisClient.sendCommand === 'function') {
+                await this.redisClient.sendCommand(['FLUSHALL']);
+            } else {
+                throw new Error('No FLUSHALL capability on Redis client');
+            }
+            return true;
+        } catch (e) {
+            console.error('[OAuth] Redis flush failed:', e.message);
+            throw e;
+        }
+    }
+
     /**
      * Establish Redis connection for session storage
      * Falls back to in-memory sessions if Redis unavailable
@@ -419,16 +452,24 @@ export class UnifiedOAuthService {
     async validateUser(email, password) {
         try {
             if (!this.config.users || !Array.isArray(this.config.users)) {
+                console.log("[USER LOGIN REQUEST] NO USERS FOUND IN CONFIG !!!!");
+                return false;
+            } else {
+                console.log("[USER LOGIN REQUEST] users configured:", this.config.users);
+            }
+
+            const user = this.config.users.find(u => u.email.trim().toLowerCase() === email.trim().toLowerCase());
+            if (!user) {
+                console.log("[USER LOGIN REQUEST] User with this emailaddress doesnt exist");
                 return false;
             }
 
-            const user = this.config.users.find(u => u.email === email);
-            if (!user) {
-                return false;
-            }
+            console.log("[USER LOGIN REQUEST] user found, password hash: ", user.password_hash);
 
             // Compare password with bcrypt hash
-            return await bcrypt.compare(password, user.password_hash);
+            const res = await bcrypt.compare(password, user.password_hash.trim());
+            console.log("[USER LOGIN REQUEST] password compare result: ", res);
+            return res;
         } catch (error) {
             console.error('User validation error:', error);
             return false;
@@ -491,6 +532,13 @@ export class UnifiedOAuthService {
         // OAuth2 Authorization endpoint - handles user authorization requests
         this.router.get('/oauth2/auth', this.handleOAuth2Auth);
 
+        // fallback route after failed auth
+        this.router.get('/oauth2/fallbacks/error', async (req, res) => {
+                console.error('Getting into fallback route, not implemented should never end-up here normally');
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Getting into fallback route, not implemented should never end-up here normally' }));            
+        });
+        
         // OAuth2 Client Registration endpoint - dynamic client registration
         this.router.post('/register', this.handleOAuth2Register);
 
@@ -812,6 +860,30 @@ export class UnifiedOAuthService {
                 const location = hydraResponse.headers.location;
                 console.log(`[OAUTH] Hydra redirect to: ${location}`);
 
+                // Check for invalid_client error in redirect
+                if (location && location.includes('error=invalid_client')) {
+                    console.log('[OAUTH] Detected invalid_client error, attempting dynamic registration...');
+                                        
+                    const registerResult = await this.handleOAuth2RegisterInternal(req, null, false);
+                    if (!registerResult || !registerResult.client_id) {
+                        console.error('[OAUTH] Dynamic registration failed');
+                        return this.handleOAuth2Error(res, 'invalid_client', 'Dynamic registration failed');    
+                    } else {
+                        const queryString = Object.entries(req.query)
+                            .map(([k, v]) =>
+                            Array.isArray(v)
+                                ? v.map(val => `${encodeURIComponent(k)}=${encodeURIComponent(val)}`).join('&')
+                                : `${encodeURIComponent(k)}=${encodeURIComponent(v)}`
+                            )
+                            .join('&');
+
+                        const baseUrl = `${req.protocol}://${req.get('host')}${encodeURI(req.path)}`;
+                        const fullUrl = queryString ? `${baseUrl}?${queryString}` : baseUrl;
+
+                        return res.redirect(fullUrl);
+                    }
+                }
+
                 // Replace internal URLs with external ones
                 let externalLocation = location;
                 if (location.includes(`http://${this.config.hydra.hostname}:${this.config.hydra.public_port}`)) {
@@ -856,7 +928,13 @@ export class UnifiedOAuthService {
      * Supports dynamic client registration with validation
      */
     handleOAuth2Register = async (req, res) => {
-        const {
+        return await this.handleOAuth2RegisterInternal(req, res, true);
+    };
+
+
+    async handleOAuth2RegisterInternal(req, res, writeResponse) {
+
+        let {
             client_id,
             client_name,
             client_secret,
@@ -865,14 +943,35 @@ export class UnifiedOAuthService {
             grant_types,
             response_types,
             token_endpoint_auth_method
-        } = req.body;
+        } = (req.body.scope ? req.body : req.query);
 
-        console.log(`[OAUTH] Client registration request: client_name=${client_name}`);
+
+        if (!redirect_uris) {
+            if (req.query.redirect_uri) {
+                redirect_uris = [req.query.redirect_uri];
+            } else if (req.body.redirect_uri) {
+                redirect_uris = [req.body.redirect_uri];
+            }
+        }
+
+        console.log(`[OAUTH] Client registration request: client_id=${client_id}, redirect_uris=${redirect_uris}, scope=${scope}, grant_types=${grant_types}, response_types=${response_types}, token_endpoint_auth_method=${token_endpoint_auth_method}, client_name=${client_name}`);
+
+
+        if (!client_name) {
+            client_name = 'OAuth Client';
+        }
+
 
         // Basic parameter validation - only redirect_uris is required for dynamic registration
         if (!redirect_uris || !Array.isArray(redirect_uris) && typeof redirect_uris !== 'string') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Missing required parameter: redirect_uris' }));
+
+            if (writeResponse) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: 'Missing required parameter: redirect_uris' }));
+            } else {
+                console.error('Missing required parameter: redirect_uris');
+                return { error: 'Missing required parameter: redirect_uris' };  
+            }
         }
 
         // Generate client_id and client_secret if not provided (dynamic registration)
@@ -884,8 +983,13 @@ export class UnifiedOAuthService {
         for (const redirectUri of redirectUriArray) {
             const isValidRedirectUri = await this.validateRedirectUri(redirectUri, this.config.oauth.allowed_redirect_domains);
             if (!isValidRedirectUri) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: `Invalid redirect URI domain: ${redirectUri}` }));
+                if (writeResponse) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: `Invalid redirect URI domain: ${redirectUri}` }));
+                } else {
+                    console.error(`Invalid redirect URI domain: ${redirectUri}`);
+                    return { error: `Invalid redirect URI domain: ${redirectUri}` };
+                }
             }
         }
 
@@ -893,8 +997,13 @@ export class UnifiedOAuthService {
         const clientScope = scope || 'openid';
         const isValidScope = this.validateScopes(clientScope, this.config.oauth.allowed_scopes);
         if (!isValidScope) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: `Invalid scope requested: ${clientScope}` }));
+            if (writeResponse) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: `Invalid scope requested: ${clientScope}` }));
+            } else {
+                console.error(`Invalid scope requested: ${clientScope}`);
+                return { error: `Invalid scope requested: ${clientScope}` };
+            }
         }
 
         const safeScope = clientScope
@@ -932,6 +1041,8 @@ export class UnifiedOAuthService {
 
             if (registerResponse.statusCode >= 200 && registerResponse.statusCode < 300) {
                 console.log('Client created successfully:', generatedClientId);
+
+                if (writeResponse) {
                 res.writeHead(201, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ 
                     client_id: generatedClientId,
@@ -943,10 +1054,22 @@ export class UnifiedOAuthService {
                     response_types: clientPayload.response_types,
                     token_endpoint_auth_method: clientPayload.token_endpoint_auth_method
                 }));
+                } else {
+                    console.log('Client created successfully (no response):', generatedClientId);
+                    return { client_id: generatedClientId, client_secret: generatedClientSecret };
+                }
+
             } else {
                 console.error('Failed to create client:', registerResponse.statusCode, registerBody);
+
+                if (writeResponse) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ error: 'Failed to register OAuth client', details: registerBody }));
+                } else {
+                    console.log('Failed to create client');
+                    return { error: 'Failed to create client' };
+
+                }
             }
 
         } catch (regError) {
@@ -957,8 +1080,9 @@ export class UnifiedOAuthService {
                 details: regError.message,
                 url: `http://${this.config.hydra.hostname}:${this.config.hydra.admin_port}/admin/clients`
             }));
-        }
-    };
+        }        
+
+    }
 
     // ================================================================
     // HYDRA INTEGRATION UTILITIES
@@ -1218,6 +1342,7 @@ export class UnifiedOAuthService {
 
             try {
                 // Validate user credentials
+                console.log("[USER LOGIN REQUEST] email and password: ", email, password);
                 const isValidUser = await this.validateUser(email, password);
 
                 if (!isValidUser) {

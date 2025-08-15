@@ -16,6 +16,7 @@ import {
 } from "child_process";
 import express from "express";
 import fs from "fs";
+import path from "path";
 import YAML from "yaml";
 // Debug logging utility
 class DebugLogger {
@@ -80,8 +81,73 @@ export class LauncherProxyService {
 
     async initialize() {
         await this.loadConfig();
+        this.loadStats();
         await this.initializeMCPServer();
         console.log('Launcher Proxy Service initialized');
+    }
+
+    // Reload configuration and restart all MCP child processes without recreating the persistent MCP server
+    async reloadFromConfig() {
+        console.log('[LauncherProxy] 🔁 Reloading configuration and restarting MCP services...');
+        // Kill existing processes
+        try {
+            for (const [name, svc] of this.processes) {
+                try { svc.proc && svc.proc.kill(); } catch {}
+            }
+            await new Promise(r => setTimeout(r, 1000));
+        } catch {}
+
+        // Reset state that depends on running services
+        this.processes = new Map();
+        this.pendingRequests = new Map();
+        this.registeredTools = new Set();
+        this.invalidateHealthCache();
+        this.invalidateServicesCache();
+
+        // Reload config and parsed services
+        await this.loadConfig();
+        this.services = await this.parseServices(this.config.mcp_services || []);
+
+        // Start all services again
+        await this.startAllServices();
+
+        // Notify connected clients about tool/resource/prompt changes
+        this.notifyToolListChanged();
+        this.notifyResourceListChanged();
+        this.notifyPromptListChanged();
+        console.log('[LauncherProxy] ✅ Reload completed');
+    }
+
+    // --- Statistics tracking ---
+    get statsFilePath() {
+        try {
+            return path.resolve(this.appPath + '/config/statistics.yaml');
+        } catch {
+            return this.appPath + '/config/statistics.yaml';
+        }
+    }
+
+    loadStats() {
+        try {
+            if (fs.existsSync(this.statsFilePath)) {
+                const txt = fs.readFileSync(this.statsFilePath, 'utf-8');
+                this.stats = YAML.parse(txt) || { services: {} };
+            } else {
+                this.stats = { services: {} };
+            }
+        } catch (e) {
+            console.warn('Failed to load statistics.yaml, starting fresh:', e.message);
+            this.stats = { services: {} };
+        }
+    }
+
+    saveStats() {
+        try {
+            const out = YAML.stringify(this.stats || { services: {} });
+            fs.writeFileSync(this.statsFilePath, out, 'utf-8');
+        } catch (e) {
+            console.warn('Failed to save statistics.yaml:', e.message);
+        }
     }
 
     async loadConfig() {
@@ -188,7 +254,13 @@ export class LauncherProxyService {
         if (Array.isArray(mcpServicesConfig)) {
             // New format: array of service objects
             for (const serviceConfig of mcpServicesConfig) {
-                if (serviceConfig.name && serviceConfig.startup_command) {
+                if (serviceConfig && serviceConfig.name && serviceConfig.startup_command) {
+                    // Skip disabled services (accept boolean false or string 'false')
+                    const enabled = !(serviceConfig.enabled === false || serviceConfig.enabled === 'false');
+                    if (!enabled) {
+                        console.log(`⏭️  Skipping disabled MCP service: ${serviceConfig.name}`);
+                        continue;
+                    }
                     // Parse startup_command string into array
                     const commandParts = serviceConfig.startup_command.split(/\s+/);
 
@@ -729,17 +801,40 @@ export class LauncherProxyService {
                 arguments: parameters
             }
         };
-
+        const reqStr = JSON.stringify(request);
         DebugLogger.logMCPRequest(serviceName, request);
-        service.proc.stdin.write(JSON.stringify(request) + '\n');
+        service.proc.stdin.write(reqStr + '\n');
 
-        const response = await this.waitForResponse(requestId, 30000);
-
-        if (response.error) {
-            throw new Error(response.error.message || 'Tool call failed');
+        let response;
+        let respStr = '';
+        try {
+            response = await this.waitForResponse(requestId, 30000);
+            respStr = JSON.stringify(response || {});
+            return response.result;
+        } finally {
+            try {
+                // Update per-service statistics
+                if (!this.stats) this.stats = { services: {} };
+                if (!this.stats.services) this.stats.services = {};
+                if (!this.stats.services[serviceName]) {
+                    this.stats.services[serviceName] = { calls: 0, bytes_in: 0, bytes_out: 0, last_call: null };
+                }
+                const rec = this.stats.services[serviceName];
+                rec.calls += 1;
+                // bytes_out: bytes we sent to the service (request)
+                rec.bytes_out += Buffer.byteLength(reqStr + '\n');
+                // bytes_in: bytes we received from the service (response)
+                rec.bytes_in += Buffer.byteLength(respStr);
+                rec.last_call = new Date().toISOString();
+                this.saveStats();
+            } catch (e) {
+                console.warn('Failed to update/save stats:', e.message);
+            }
+            if (response && response.error) {
+                // Re-throw after stats saved
+                throw new Error(response.error.message || 'Tool call failed');
+            }
         }
-
-        return response.result;
     }
 
     // Create the persistent MCP server instance

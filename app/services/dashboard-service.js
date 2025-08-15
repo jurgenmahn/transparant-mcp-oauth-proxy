@@ -7,12 +7,14 @@ import yaml from 'yaml';
 import session from 'express-session';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { request } from 'undici';
 
 const execAsync = promisify(exec);
 
 export class DashboardService {
-    constructor(appPath) {
+    constructor(appPath, mcpServerRef = null) {
         this.appPath = appPath;
+        this.mcpServerRef = mcpServerRef; // Access to server-level reloads
         this.router = express.Router();
         this.config = {};
         this.setupSession();
@@ -20,6 +22,7 @@ export class DashboardService {
         this.setupHashGenerationRoute();
         this.setupUserRoutes();
         this.setupRestartRoutes();
+        this.setupStatsRoute();
         this.setupVersionRoute();
     }
 
@@ -30,6 +33,47 @@ export class DashboardService {
             saveUninitialized: false,
             cookie: { secure: false, httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
         }));
+    }
+
+    // Stats API
+    setupStatsRoute() {
+        this.router.get('/api/mcp-stats', this.requireAuth.bind(this), async (_req, res) => {
+            try {
+                // Load enabled services from local.yaml
+                const localPath = path.resolve(this.appPath + '/config/local.yaml');
+                let enabledNames = [];
+                try {
+                    const raw = await fs.readFile(localPath, 'utf8');
+                    const cfg = yaml.parse(raw) || {};
+                    const arr = Array.isArray(cfg.mcp_services) ? cfg.mcp_services : [];
+                    enabledNames = arr
+                        .filter(s => s && s.name && !(s.enabled === false || s.enabled === 'false'))
+                        .map(s => s.name);
+                } catch {}
+
+                // Load statistics file
+                const statsPath = path.resolve(this.appPath + '/config/statistics.yaml');
+                let stats = { services: {} };
+                try {
+                    const txt = await fs.readFile(statsPath, 'utf8');
+                    stats = yaml.parse(txt) || { services: {} };
+                } catch {}
+
+                const out = enabledNames.map(name => {
+                    const rec = (stats.services && stats.services[name]) || {};
+                    return {
+                        name,
+                        calls: Number(rec.calls || 0),
+                        bytes_in: Number(rec.bytes_in || 0),
+                        bytes_out: Number(rec.bytes_out || 0),
+                        last_call: rec.last_call || null
+                    };
+                });
+                res.json({ services: out });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to load stats', detail: String(e?.message || e) });
+            }
+        });
     }
 
     async initialize() {
@@ -64,6 +108,61 @@ export class DashboardService {
 
         // Logout
         this.router.post('/logout', (req, res) => { req.session.destroy(() => res.json({ success: true })); });
+
+        // Admin: Flush full Redis DB/cache (FLUSHALL)
+        this.router.post('/api/admin/redis-flush', this.requireAuth.bind(this), async (_req, res) => {
+            try {
+                const svc = this.mcpServerRef?.services?.unifiedOAuth;
+                if (!svc || typeof svc.flushAllRedis !== 'function') {
+                    return res.status(500).json({ error: 'Redis flush unavailable' });
+                }
+                await svc.flushAllRedis();
+                res.json({ success: true, message: 'Redis FLUSHALL executed' });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to flush Redis', detail: String(e?.message || e) });
+            }
+        });
+
+        // Admin: List all Hydra clients
+        this.router.get('/api/admin/hydra/clients', this.requireAuth.bind(this), async (_req, res) => {
+            try {
+                const cfg = await this.readLocalYaml();
+                const base = `http://${cfg.hydra.hostname}:${cfg.hydra.admin_port}/admin`;
+                const r = await request(`${base}/clients`);
+                const txt = await r.body.text();
+                let clients = [];
+                try { clients = JSON.parse(txt); } catch {}
+                res.json({ clients });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to list Hydra clients', detail: String(e?.message || e) });
+            }
+        });
+
+        // Admin: Delete all Hydra clients
+        this.router.delete('/api/admin/hydra/clients', this.requireAuth.bind(this), async (_req, res) => {
+            try {
+                const cfg = await this.readLocalYaml();
+                const base = `http://${cfg.hydra.hostname}:${cfg.hydra.admin_port}/admin`;
+                const list = await request(`${base}/clients`);
+                const listTxt = await list.body.text();
+                let clients = [];
+                try { clients = JSON.parse(listTxt || '[]'); } catch { clients = []; }
+                let deleted = 0; let errors = 0;
+                for (const c of clients) {
+                    const id = c.client_id || c.id || c.clientId || c.name;
+                    if (!id) continue;
+                    try {
+                        await request(`${base}/clients/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                        deleted++;
+                    } catch {
+                        errors++;
+                    }
+                }
+                res.json({ success: true, deleted, errors });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to delete Hydra clients', detail: String(e?.message || e) });
+            }
+        });
 
         // Login (dashboard users)
         this.router.post('/login', async (req, res) => {
@@ -126,7 +225,20 @@ export class DashboardService {
                 const backupPath = `${filePath}.bak.${ts}`;
                 await fs.writeFile(backupPath, originalText, 'utf8');
 
-                const newText = content ?? yaml.stringify(obj ?? {});
+                // Prepare object to save; apply MCP users password hashing
+                let toWriteObj = null;
+                if (obj && typeof obj === 'object') {
+                    toWriteObj = await this.applyMcpUserPasswordTransform(obj, originalText);
+                } else if (content) {
+                    try {
+                        const parsed = yaml.parse(content) || {};
+                        toWriteObj = await this.applyMcpUserPasswordTransform(parsed, originalText);
+                    } catch {
+                        // Fall back to raw content if not YAML
+                    }
+                }
+
+                const newText = toWriteObj ? yaml.stringify(toWriteObj) : (content ?? yaml.stringify(obj ?? {}));
                 await fs.writeFile(filePath, newText, 'utf8');
 
                 // Validate parse
@@ -144,6 +256,59 @@ export class DashboardService {
         });
 
         // (Preview full-file route removed)
+    }
+
+    // Transform MCP users array: hash plain passwords and preserve existing hashes
+    async applyMcpUserPasswordTransform(newObj, originalText) {
+        try {
+            const out = JSON.parse(JSON.stringify(newObj || {}));
+            if (!Array.isArray(out.users)) return out; // nothing to do
+
+            // Build map of prior hashes by identifier (name/email)
+            let prior = {};
+            try {
+                const prev = yaml.parse(originalText) || {};
+                const prevUsers = Array.isArray(prev.users) ? prev.users : [];
+                for (const u of prevUsers) {
+                    const key = (u.name || u.email || '').toLowerCase();
+                    if (!key) continue;
+                    if (u.password_hash) prior[key] = String(u.password_hash);
+                }
+            } catch {}
+
+            // Walk new users and apply hashing/preservation
+            const updated = [];
+            for (const u of out.users) {
+                const nu = { ...u };
+                // Ensure 'email' key is used; migrate from 'name' if needed
+                if (!nu.email && nu.name) { nu.email = nu.name; delete nu.name; }
+                const key = (nu.email || '').toLowerCase();
+                const plain = (nu.password || '').trim();
+                delete nu.password; // never persist plain password
+                if (plain) {
+                    try {
+                        nu.password_hash = await bcrypt.hash(plain, 12);
+                    } catch (e) {
+                        // If hashing fails, fall back to previous hash if present
+                        if (key && prior[key]) nu.password_hash = prior[key];
+                    }
+                } else {
+                    // No new password provided: keep existing hash if available
+                    if (key && prior[key]) nu.password_hash = prior[key];
+                }
+                updated.push(nu);
+            }
+            out.users = updated;
+            return out;
+        } catch {
+            return newObj;
+        }
+    }
+
+    async readLocalYaml() {
+        const localPath = path.resolve(this.appPath + '/config/local.yaml');
+        const raw = await fs.readFile(localPath, 'utf8');
+        return yaml.parse(raw) || {};
     }
     
     // Authentication middleware
@@ -291,7 +456,7 @@ export class DashboardService {
         // Execute service restart
         this.router.post('/api/restart-service', this.requireAuth.bind(this), async (req, res) => {
             try {
-                const { serviceName, restartCommand } = req.body;
+                const { serviceName, restartCommand } = req.body || {};
                 
                 if (!serviceName || !restartCommand) {
                     return res.status(400).json({ error: 'Service name and restart command are required' });
@@ -299,25 +464,37 @@ export class DashboardService {
                 
                 console.log(`🔄 Restarting service: ${serviceName} with command: ${restartCommand}`);
                 
-                // Special handling for MCP Server configuration restart - warn about dashboard restart
-                const isDashboardRestart = serviceName === 'MCP Server configuration';
+                // Special handling for MCP Server configuration: internal reload
+                if (serviceName === 'MCP Server configuration' || String(restartCommand).startsWith('internal:reload-mcp')) {
+                    try {
+                        if (!this.mcpServerRef || typeof this.mcpServerRef.reloadMcpAndOAuth !== 'function') {
+                            return res.status(500).json({ error: 'Reload function not available' });
+                        }
+                        await this.mcpServerRef.reloadMcpAndOAuth();
+                        return res.json({ success: true, message: 'MCP and OAuth reloaded' });
+                    } catch (e) {
+                        console.error('❌ Internal reload failed:', e);
+                        return res.status(500).json({ error: 'Internal reload failed', detail: String(e?.message || e) });
+                    }
+                }
+
+                // Hydra restart is hardcoded for safety
+                const isHydra = serviceName.toLowerCase().includes('hydra');
+                const cmd = isHydra ? 'supervisorctl restart hydra' : restartCommand;
                 
                 try {
-                    const { stdout, stderr } = await execAsync(restartCommand);
-                    console.log(`✅ Service restart completed for ${serviceName}`);
+                    const { stdout, stderr } = await execAsync(cmd);
+                    console.log(`✅ Service restart completed for ${serviceName} (cmd: ${cmd})`);
                     if (stdout) console.log('Restart stdout:', stdout);
                     if (stderr) console.log('Restart stderr:', stderr);
-                    
                     res.json({ 
                         success: true, 
-                        message: `${serviceName} restarted successfully`,
-                        isDashboardRestart
+                        message: `${serviceName} restarted successfully`
                     });
                 } catch (execError) {
                     console.error(`❌ Service restart failed for ${serviceName}:`, execError);
                     res.status(500).json({ 
-                        error: `Failed to restart ${serviceName}: ${execError.message}`,
-                        isDashboardRestart
+                        error: `Failed to restart ${serviceName}: ${execError.message}`
                     });
                 }
                 
@@ -339,27 +516,48 @@ export class DashboardService {
             }
         });
 
-        // List all services from dashboard.yaml that have a restart_command
+        // List services that can be restarted
         this.router.get('/api/services-with-restart', this.requireAuth.bind(this), async (req, res) => {
             try {
                 // Always reload dashboard config to reflect latest changes
                 await this.loadDashboardConfig();
 
                 const files = (this.config?.dashboard?.configs?.files || []);
-                const services = files
-                    .filter(f => !!f.restart_command && !!f.name)
-                    .map(f => ({ name: f.name, restartCommand: f.restart_command }))
-                    // Ensure dashboard/server restart goes last to avoid interrupting others
-                    .sort((a, b) => {
-                        const isDashA = a.name === 'MCP Server configuration';
-                        const isDashB = b.name === 'MCP Server configuration';
-                        return (isDashA === isDashB) ? 0 : (isDashA ? 1 : -1);
-                    });
+                const services = [];
+
+                for (const f of files) {
+                    if (!f?.name) continue;
+                    if (f.name === 'MCP Server configuration') {
+                        services.push({ name: f.name, restartCommand: 'internal:reload-mcp' });
+                    } else if (f.name.toLowerCase().includes('hydra')) {
+                        services.push({ name: f.name, restartCommand: 'supervisorctl restart hydra' });
+                    }
+                }
+
+                // Ensure MCP reload goes last
+                services.sort((a, b) => {
+                    const isMcpA = a.name === 'MCP Server configuration';
+                    const isMcpB = b.name === 'MCP Server configuration';
+                    return (isMcpA === isMcpB) ? 0 : (isMcpA ? 1 : -1);
+                });
 
                 res.json({ services });
             } catch (error) {
                 console.error('Error listing services with restart:', error);
                 res.status(500).json({ error: 'Failed to list services' });
+            }
+        });
+
+        // Explicit endpoint to trigger internal MCP+OAuth reload (used by UI if needed)
+        this.router.post('/api/reload-mcp', this.requireAuth.bind(this), async (_req, res) => {
+            try {
+                if (!this.mcpServerRef || typeof this.mcpServerRef.reloadMcpAndOAuth !== 'function') {
+                    return res.status(500).json({ error: 'Reload function not available' });
+                }
+                await this.mcpServerRef.reloadMcpAndOAuth();
+                res.json({ success: true });
+            } catch (e) {
+                res.status(500).json({ error: 'Internal reload failed', detail: String(e?.message || e) });
             }
         });
     }

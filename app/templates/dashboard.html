@@ -6,6 +6,18 @@
     <title>MCP Configuration Dashboard</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
+        /* Inline btn variant for dashboard actions */
+        .btn-inline { width: auto; padding: 8px 16px; font-size: 14px; border-radius: 6px; }
+        /* Toast notifications */
+        #toast-container { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 2000; }
+        .toast { min-width: 280px; max-width: 420px; padding: 12px 14px; border-radius: 8px; color: #1a202c; background: #edf2f7; border-left: 4px solid #4a5568; box-shadow: 0 10px 20px rgba(0,0,0,0.12); opacity: 0; transform: translateY(10px); animation: toast-in 180ms ease-out forwards; }
+        .toast.success { background: #f0fff4; border-left-color: #38a169; }
+        .toast.error { background: #fff5f5; border-left-color: #e53e3e; }
+        .toast.info { background: #ebf8ff; border-left-color: #3182ce; }
+        .toast .close { float: right; cursor: pointer; font-weight: bold; color: #4a5568; margin-left: 10px; }
+        .toast .close:hover { color: #1a202c; }
+        @keyframes toast-in { to { opacity: 1; transform: translateY(0); } }
+        @keyframes toast-out { to { opacity: 0; transform: translateY(10px); } }
         .dashboard-container {
             width: 1000px;
             background: white;
@@ -183,6 +195,27 @@
             border-radius: 8px;
             position: relative;
         }
+
+        /* Service item header/content for collapsible services */
+        .svc-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f1f5f9;
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            border: 1px solid #e2e8f0;
+            margin-bottom: 10px;
+        }
+        .svc-header .svc-left { display: flex; align-items: center; gap: 8px; }
+        .svc-caret { color: #667eea; transition: transform 0.2s ease; }
+        .svc-header.collapsed .svc-caret { transform: rotate(-90deg); }
+        .svc-title { font-weight: 600; color: #2d3748; }
+        .svc-enabled label { font-size: 13px; color: #4a5568; }
+        .svc-content { display: none; }
+        .svc-header:not(.collapsed) + .svc-content { display: block; }
 
         .array-item:has(.field-group) {
         border: 2px double #000;
@@ -531,7 +564,9 @@
                     <button class="tab-btn active" data-tab="general">General</button>
                     <button class="tab-btn" data-tab="mcp">MCP</button>
                     <button class="tab-btn" data-tab="hydra">Hydra</button>
+                    <button class="tab-btn" data-tab="stats">Stats</button>
                     <button class="tab-btn" data-tab="users">Dashboard Users</button>
+                    <button class="tab-btn" data-tab="admin">Admin</button>
                 </div>
 
                 <!-- Configuration Form across tabs (only config tabs inside the form) -->
@@ -545,7 +580,27 @@
                     <div class="tab-pane" id="tab-hydra">
                         <div id="hydra-form"></div>
                     </div>
-                    <div style="display:flex; gap:10px; justify-content:center; margin-top:20px;">
+                    <div class="tab-pane" id="tab-stats">
+                        <div class="section">
+                            <div class="section-header">MCP Service Statistics</div>
+                            <div class="section-content expanded">
+                                <div id="stats-error" class="error" style="display:none;"></div>
+                                <table id="stats-table" style="width:100%; border-collapse:collapse;">
+                                    <thead>
+                                        <tr style="text-align:left; border-bottom:1px solid #e2e8f0;">
+                                            <th style="padding:8px 6px;">Service</th>
+                                            <th style="padding:8px 6px;">Calls</th>
+                                            <th style="padding:8px 6px;">Bytes Out</th>
+                                            <th style="padding:8px 6px;">Bytes In</th>
+                                            <th style="padding:8px 6px;">Last Call</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="stats-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="save-actions" style="display:flex; gap:10px; justify-content:center; margin-top:20px;">
                         <button type="submit" class="submit-btn">Save Configuration</button>
                     </div>
                 </form>
@@ -557,7 +612,7 @@
                             <div class="section-header">Dashboard Users</div>
                             <div class="section-content expanded">
                                 <div id="user-list" class="user-list"></div>
-                                <button type="button" id="add-user-btn" class="btn" style="margin-top: 15px;">Add New User</button>
+                                <button type="button" id="add-user-btn" class="btn btn-inline" style="margin-top: 15px;">Add New User</button>
                                 <div id="add-user-form" class="add-user-form" style="display: none;">
                                     <div class="form-row">
                                         <div class="field-group">
@@ -574,6 +629,33 @@
                                         <button type="button" id="cancel-new-user" class="logout-btn">Cancel</button>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Admin tab -->
+                <div class="tab-pane" id="tab-admin">
+                    <div class="section">
+                        <div class="section-header">Maintenance</div>
+                        <div class="section-content expanded">
+                            <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                                <button type="button" id="btn-redis-flush" class="btn btn-inline">Flush Redis (FLUSHALL)</button>
+                                <button type="button" id="btn-hydra-delete" class="btn btn-inline">Delete All Hydra Clients</button>
+                                <button type="button" id="btn-hydra-list" class="btn btn-inline">Show Hydra Clients</button>
+                            </div>
+                            <div id="hydra-clients-wrap" style="margin-top:16px; display:none;">
+                                <table id="hydra-clients-table" style="width:100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="text-align:left; border-bottom:1px solid #e2e8f0;">
+                                            <th style="padding:8px 6px;">Client ID</th>
+                                            <th style="padding:8px 6px;">Name</th>
+                                            <th style="padding:8px 6px;">Redirect URIs</th>
+                                            <th style="padding:8px 6px;">Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="hydra-clients-body"></tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -615,8 +697,95 @@
     
     <!-- (Preview modal removed) -->
     
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span id="confirm-close" class="close">&times;</span>
+                <h2 id="confirm-title">Confirm</h2>
+            </div>
+            <div class="modal-body">
+                <div id="confirm-message" style="white-space: pre-wrap;"></div>
+                <div style="display:flex; gap:10px; margin-top:20px; justify-content:flex-end;">
+                    <button type="button" id="confirm-cancel" class="logout-btn">Cancel</button>
+                    <button type="button" id="confirm-ok" class="btn">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script>
         let currentUserEmail = '';
+        
+        // Simple toast notifications
+        function showToast(message, type = 'info', timeout = 4000) {
+            let container = document.getElementById('toast-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toast-container';
+                document.body.appendChild(container);
+            }
+            const el = document.createElement('div');
+            el.className = `toast ${type}`;
+            const close = document.createElement('span');
+            close.className = 'close';
+            close.textContent = '×';
+            close.onclick = () => dismiss();
+            const msg = document.createElement('span');
+            msg.textContent = message;
+            el.appendChild(close);
+            el.appendChild(msg);
+            container.appendChild(el);
+
+            let hideTimer = null;
+            const dismiss = () => {
+                if (hideTimer) return; // avoid duplicate
+                el.style.animation = 'toast-out 180ms ease-in forwards';
+                hideTimer = setTimeout(() => {
+                    el.remove();
+                }, 200);
+            };
+
+            if (timeout > 0) setTimeout(dismiss, timeout);
+            return { dismiss };
+        }
+
+        // Modal confirm helper
+        function showConfirm(message, opts = {}) {
+            const { title = 'Confirm', okText = 'OK', cancelText = 'Cancel' } = opts || {};
+            const modal = document.getElementById('confirm-modal');
+            const titleEl = document.getElementById('confirm-title');
+            const msgEl = document.getElementById('confirm-message');
+            const okBtn = document.getElementById('confirm-ok');
+            const cancelBtn = document.getElementById('confirm-cancel');
+            const closeBtn = document.getElementById('confirm-close');
+            return new Promise(resolve => {
+                let settled = false;
+                const cleanup = () => {
+                    okBtn.removeEventListener('click', onOk);
+                    cancelBtn.removeEventListener('click', onCancel);
+                    closeBtn.removeEventListener('click', onCancel);
+                    modal.removeEventListener('click', onBackdrop);
+                    window.removeEventListener('keydown', onKey);
+                    modal.style.display = 'none';
+                };
+                const onOk = () => { if (!settled) { settled = true; cleanup(); resolve(true); } };
+                const onCancel = () => { if (!settled) { settled = true; cleanup(); resolve(false); } };
+                const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
+                const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
+
+                titleEl.textContent = title;
+                msgEl.textContent = message;
+                okBtn.textContent = okText;
+                cancelBtn.textContent = cancelText;
+                okBtn.addEventListener('click', onOk);
+                cancelBtn.addEventListener('click', onCancel);
+                closeBtn.addEventListener('click', onCancel);
+                modal.addEventListener('click', onBackdrop);
+                window.addEventListener('keydown', onKey);
+                modal.style.display = 'block';
+            });
+        }
         
         // Check authentication status
         async function checkAuth() {
@@ -714,6 +883,8 @@
                 if (hydra) renderHydraForm(hydra);
                 attachDomainValidationListeners();
                 validateDomainConsistency();
+                // Initialize collapsibles for newly rendered service items
+                try { initializeCollapsibleSections(); } catch {}
             } catch (e) {
                 console.error('Failed to render forms:', e);
             }
@@ -862,6 +1033,40 @@
             document.getElementById('hydra-form').innerHTML = form.join('');
         }
 
+        // Stats polling
+        let statsTimer = null;
+        async function fetchAndRenderStats() {
+            try {
+                const r = await fetch('/dashboard/api/mcp-stats');
+                if (!r.ok) throw new Error('Failed to load stats');
+                const data = await r.json();
+                const services = Array.isArray(data.services) ? data.services : [];
+                const tbody = document.getElementById('stats-body');
+                tbody.innerHTML = services.map(s => `
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:8px 6px; font-weight:600; color:#2d3748;">${s.name}</td>
+                        <td style="padding:8px 6px;">${s.calls}</td>
+                        <td style="padding:8px 6px;">${formatBytes(s.bytes_out)}</td>
+                        <td style="padding:8px 6px;">${formatBytes(s.bytes_in)}</td>
+                        <td style="padding:8px 6px;">${s.last_call ? new Date(s.last_call).toLocaleString() : '—'}</td>
+                    </tr>
+                `).join('');
+                document.getElementById('stats-error').style.display = 'none';
+            } catch (e) {
+                const el = document.getElementById('stats-error');
+                el.textContent = 'Failed to load stats';
+                el.style.display = 'block';
+            }
+        }
+        function formatBytes(b) {
+            const n = Number(b||0);
+            if (n < 1024) return `${n} B`;
+            const units = ['KB','MB','GB','TB'];
+            let v = n/1024, i=0;
+            while (v>=1024 && i<units.length-1) { v/=1024; i++; }
+            return `${v.toFixed(1)} ${units[i]}`;
+        }
+
         function section(title, inner) {
             return `
                 <div class="section">
@@ -915,25 +1120,39 @@
                     <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
                 </div>
             `).join('');
+            const enabledChecked = (svc.enabled !== false && svc.enabled !== 'false') ? 'checked' : '';
+            const title = esc(svc.name) || 'New Service';
+            const nameInput = inputText(fileAlias, 'mcp_services', `name`, 'Service Name', esc(svc.name))
+                .replace('data-yaml-key="name"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][name]" oninput=\"this.closest('.array-item').querySelector('.svc-title').textContent='Service: ' + (this.value||'New Service')\"`);
             return `
                 <div class="array-item" data-index="${index}">
-                    ${inputText(fileAlias, 'mcp_services', `name`, 'Service Name', esc(svc.name))
-                        .replace('data-yaml-key="name"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
-                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][name]"`)}
-                    ${inputText(fileAlias, 'mcp_services', `startup_command`, 'Startup Command', esc(svc.startup_command))
-                        .replace('data-yaml-key="startup_command"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
-                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][startup_command]"`)}
-                    <div class="field-group">
-                        <label>Options</label>
-                        <div class="array-field" id="mcp_services_${index}_options">
-                            ${optItems}
+                    <div class="svc-header collapsed" onclick="toggleServiceSection(this)">
+                        <div class="svc-left"><span class="svc-caret">▶</span><span class="svc-title">Service: ${title}</span></div>
+                        <div class="svc-enabled">
+                            <label>
+                                <input type="hidden" name="mcp_services[${index}][enabled]" value="false" data-file="${fileAlias}" data-yaml-path="mcp_services" data-yaml-key="mcp_services">
+                                <input type="checkbox" name="mcp_services[${index}][enabled]" value="true" ${enabledChecked} data-file="${fileAlias}" data-yaml-path="mcp_services" data-yaml-key="mcp_services"> Enabled
+                            </label>
                         </div>
-                        <button type="button" class="add-array-item" onclick="addArrayItem('mcp_services_${index}_options','${fileAlias}','mcp_services','mcp_services[${index}][options]')">Add Option</button>
                     </div>
-                    ${inputText(fileAlias, 'mcp_services', `install`, 'Install (single line)', esc(svc.install))
-                        .replace('data-yaml-key="install"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
-                        .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][install]"`)}
-                    <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove Service</button>
+                    <div class="svc-content">
+                        ${nameInput}
+                        ${inputText(fileAlias, 'mcp_services', `startup_command`, 'Startup Command', esc(svc.startup_command))
+                            .replace('data-yaml-key="startup_command"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                            .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][startup_command]"`)}
+                        <div class="field-group">
+                            <label>Options</label>
+                            <div class="array-field" id="mcp_services_${index}_options">
+                                ${optItems}
+                            </div>
+                            <button type="button" class="add-array-item" onclick="addArrayItem('mcp_services_${index}_options','${fileAlias}','mcp_services','mcp_services','mcp_services[${index}][options]')">Add Option</button>
+                        </div>
+                        ${inputText(fileAlias, 'mcp_services', `install`, 'Install (single line)', esc(svc.install))
+                            .replace('data-yaml-key="install"','data-yaml-path="mcp_services" data-yaml-key="mcp_services"')
+                            .replace('<input type="text"', `<input type="text" name="mcp_services[${index}][install]"`)}
+                        <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove Service</button>
+                    </div>
                 </div>
             `;
         }
@@ -944,7 +1163,7 @@
                 <div class="array-item" data-index="${index}">
                     <div class="sub-field">
                         <label>Email</label>
-                        <input type="text" name="users[${index}][name]" data-file="${fileAlias}" data-yaml-path="users" data-yaml-key="users" value="${esc(email)}" placeholder="Email">
+                        <input type="text" name="users[${index}][email]" data-file="${fileAlias}" data-yaml-path="users" data-yaml-key="users" value="${esc(email)}" placeholder="Email">
                     </div>
                     <div class="sub-field">
                         <label>Password</label>
@@ -957,26 +1176,32 @@
         function corsArray(a) { return Array.isArray(a) ? a : []; }
 
         // Array helpers for hardcoded UI
-        window.addArrayItem = function(containerId, fileAlias, path, keyPrefix) {
+        // Array helpers for hardcoded UI
+        // Usage:
+        //  - Simple arrays: addArrayItem(containerId, alias, path, ykey)
+        //  - Complex arrays (with name prefix): addArrayItem(containerId, alias, path, ykey, namePrefix)
+        window.addArrayItem = function(containerId, fileAlias, path, ykey, namePrefix) {
             const container = document.getElementById(containerId);
+            if (!container) return;
             const idx = container.querySelectorAll('.array-item').length;
             const div = document.createElement('div');
             div.className = 'array-item';
             div.setAttribute('data-index', idx);
+            const nameAttr = namePrefix ? `${namePrefix}[${idx}]` : `${fileAlias}-${ykey}[${idx}]`;
             div.innerHTML = `
-                <input type="text" name="${keyPrefix ? keyPrefix : (containerId + '['+idx+']')}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${containerId.includes('allowed')? (containerId.includes('redirect')?'allowed_redirect_domains':'allowed_origins'): 'system'}" value="" placeholder="Enter value">
+                <input type="text" name="${nameAttr}" data-file="${fileAlias}" data-yaml-path="${path}" data-yaml-key="${ykey}" value="" placeholder="Enter value">
                 <button type="button" class="remove-array-item" onclick="removeArrayItem(this)">Remove</button>
             `;
             container.appendChild(div);
         }
         window.addMcpService = function() {
             const wrap = document.getElementById('mcp-services');
-            const idx = wrap.querySelectorAll('> .array-item').length;
+            const idx = wrap.querySelectorAll(':scope > .array-item').length;
             wrap.insertAdjacentHTML('beforeend', serviceItem('MCP', idx, {}));
         }
         window.addMcpUser = function() {
             const wrap = document.getElementById('mcp-users');
-            const idx = wrap.querySelectorAll('> .array-item').length;
+            const idx = wrap.querySelectorAll(':scope > .array-item').length;
             wrap.insertAdjacentHTML('beforeend', userItem('MCP', idx, {}));
         }
 
@@ -1080,19 +1305,22 @@
                 const listResp = await fetch('/dashboard/api/services-with-restart');
                 if (!listResp.ok) {
                     const err = await listResp.json().catch(() => ({}));
-                    alert(err.error || 'Failed to load services to restart');
+                    showToast(err.error || 'Failed to load services to restart', 'error');
                     return;
                 }
                 const data = await listResp.json();
                 const services = Array.isArray(data.services) ? data.services : [];
 
                 if (services.length === 0) {
-                    alert('No services with restart_command found in dashboard.yaml');
+                    showToast('No restartable services found', 'info');
                     return;
                 }
 
                 const names = services.map(s => `• ${s.name}`).join('\n');
-                const proceed = confirm(`This will restart the following services:\n\n${names}\n\nContinue?`);
+                const proceed = await showConfirm(
+                    `This will restart the following services:\n\n${names}\n\nContinue?`,
+                    { title: 'Restart Services', okText: 'Restart', cancelText: 'Cancel' }
+                );
                 if (!proceed) return;
 
                 // Restart sequentially; dashboard/server restart goes last (API already sorts)
@@ -1101,7 +1329,7 @@
                 }
             } catch (error) {
                 console.error('Reload all error:', error);
-                alert('Error while reloading services');
+                showToast('Error while reloading services', 'error');
             }
         });
         
@@ -1142,10 +1370,33 @@
                 btn.classList.add('active');
                 pane.classList.add('active');
             }
+            // Show save button only on config tabs
+            const saveWrap = document.getElementById('save-actions');
+            if (saveWrap) {
+                if (name === 'general' || name === 'mcp' || name === 'hydra') {
+                    saveWrap.style.display = 'flex';
+                } else {
+                    saveWrap.style.display = 'none';
+                }
+            }
+            // Start/stop stats polling depending on tab
+            if (name === 'stats') {
+                if (!statsTimer) {
+                    fetchAndRenderStats();
+                    statsTimer = setInterval(fetchAndRenderStats, 2000);
+                }
+            } else {
+                if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+            }
         }
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => activateTab(btn.dataset.tab));
         });
+        // On initial render, hide Save on non-config tabs if default changes
+        (function initSaveVisibility(){
+            const activeBtn = document.querySelector('.tab-btn.active');
+            if (activeBtn) activateTab(activeBtn.dataset.tab);
+        })();
         
         // Load users
         async function loadUsers() {
@@ -1159,6 +1410,55 @@
                 console.error('Error loading users:', error);
             }
         }
+
+        // Admin helpers
+        async function adminFlushRedis() {
+            const ok = await showConfirm('This will FLUSHALL the Redis DB. Continue?', { title: 'Flush Redis', okText: 'Flush', cancelText: 'Cancel' });
+            if (!ok) return;
+            try {
+                const r = await fetch('/dashboard/api/admin/redis-flush', { method: 'POST' });
+                if (!r.ok) throw new Error('Flush failed');
+                showToast('Redis cache flushed', 'success');
+            } catch (e) {
+                showToast('Failed to flush Redis', 'error');
+            }
+        }
+        async function adminListHydraClients() {
+            try {
+                const r = await fetch('/dashboard/api/admin/hydra/clients');
+                if (!r.ok) throw new Error('List failed');
+                const data = await r.json();
+                const arr = Array.isArray(data.clients) ? data.clients : [];
+                const tbody = document.getElementById('hydra-clients-body');
+                tbody.innerHTML = arr.map(c => {
+                    const id = c.client_id || c.id || '';
+                    const name = c.client_name || c.name || '';
+                    const redirects = (c.redirect_uris || c.redirectUris || []).join(', ');
+                    const created = c.created_at || c.createdAt || '';
+                    return `<tr style="border-bottom:1px solid #f1f5f9;"><td style=\"padding:8px 6px;\">${id}</td><td style=\"padding:8px 6px;\">${name}</td><td style=\"padding:8px 6px;\">${redirects}</td><td style=\"padding:8px 6px;\">${created}</td></tr>`;
+                }).join('');
+                document.getElementById('hydra-clients-wrap').style.display = 'block';
+                showToast(`Loaded ${arr.length} Hydra clients`, 'success');
+            } catch (e) {
+                showToast('Failed to load Hydra clients', 'error');
+            }
+        }
+        async function adminDeleteHydraClients() {
+            const ok = await showConfirm('Delete ALL Hydra clients? This cannot be undone.', { title: 'Delete Hydra Clients', okText: 'Delete', cancelText: 'Cancel' });
+            if (!ok) return;
+            try {
+                const r = await fetch('/dashboard/api/admin/hydra/clients', { method: 'DELETE' });
+                const data = await r.json().catch(()=>({}));
+                if (!r.ok) throw new Error(data.error || 'Delete failed');
+                showToast(`Deleted ${data.deleted || 0} clients`, 'success');
+                adminListHydraClients();
+            } catch (e) {
+                showToast('Failed to delete Hydra clients', 'error');
+            }
+        }
+        document.getElementById('btn-redis-flush')?.addEventListener('click', adminFlushRedis);
+        document.getElementById('btn-hydra-list')?.addEventListener('click', adminListHydraClients);
+        document.getElementById('btn-hydra-delete')?.addEventListener('click', adminDeleteHydraClients);
         
         // Display users
         function displayUsers(users) {
@@ -1201,7 +1501,7 @@
             const password = document.getElementById('new-user-password').value;
             
             if (!email || !password) {
-                alert('Please fill in all fields');
+                showToast('Please fill in all fields', 'error');
                 return;
             }
             
@@ -1217,10 +1517,10 @@
                     loadUsers();
                 } else {
                     const error = await response.json();
-                    alert(error.error || 'Failed to add user');
+                    showToast(error.error || 'Failed to add user', 'error');
                 }
             } catch (error) {
-                alert('Connection error');
+                showToast('Connection error', 'error');
             }
         });
         
@@ -1264,23 +1564,26 @@
                     }
                 } else {
                     const error = await response.json();
-                    alert(error.error || 'Failed to update user');
+                    showToast(error.error || 'Failed to update user', 'error');
                 }
             } catch (error) {
-                alert('Connection error');
+                showToast('Connection error', 'error');
             }
         });
         
         // Delete user functionality
         async function deleteUser(email) {
             if (email === currentUserEmail) {
-                alert('Cannot delete your own account');
+                showToast('Cannot delete your own account', 'error');
                 return;
             }
             
-            if (!confirm(`Are you sure you want to delete user: ${email}?`)) {
-                return;
-            }
+            const proceed = await showConfirm(`Are you sure you want to delete user: ${email}?`, {
+                title: 'Delete User',
+                okText: 'Delete',
+                cancelText: 'Cancel'
+            });
+            if (!proceed) return;
             
             try {
                 const response = await fetch(`/dashboard/api/users/${encodeURIComponent(email)}`, {
@@ -1291,10 +1594,10 @@
                     loadUsers();
                 } else {
                     const error = await response.json();
-                    alert(error.error || 'Failed to delete user');
+                    showToast(error.error || 'Failed to delete user', 'error');
                 }
             } catch (error) {
-                alert('Connection error');
+                showToast('Connection error', 'error');
             }
         }
         
@@ -1356,10 +1659,10 @@
                     const data = await response.json();
                     document.getElementById(fieldId).value = data.hash;
                 } else {
-                    alert('Failed to generate hash');
+                    showToast('Failed to generate hash', 'error');
                 }
             } catch (error) {
-                alert('Connection error');
+                showToast('Connection error', 'error');
             }
         }
         
@@ -1431,6 +1734,11 @@
                 e.stopPropagation();
                 toggleSection(header);
             }
+            // Service header toggle
+            if (e.target.classList.contains('svc-header') || e.target.closest('.svc-header')) {
+                const h = e.target.classList.contains('svc-header') ? e.target : e.target.closest('.svc-header');
+                h.classList.toggle('collapsed');
+            }
         });
         
         // Initialize collapsible sections: expand all except MCP tab
@@ -1458,6 +1766,8 @@
                     if (content) content.classList.add('expanded');
                 }
             });
+            // Collapse all service items by default on init
+            document.querySelectorAll('#mcp-services .svc-header').forEach(h => h.classList.add('collapsed'));
         }
         
         // Handle service restart confirmations
@@ -1477,12 +1787,41 @@
                 }
                 
                 console.log('❓ Showing confirmation dialog...');
-                if (confirm(confirmMessage)) {
+                if (await showConfirm(confirmMessage, { title: 'Restart Service', okText: 'Restart', cancelText: 'Skip' })) {
                     console.log('✅ User confirmed restart');
                     await restartService(service);
                 } else {
                     console.log('❌ User declined restart');
                 }
+            }
+        }
+        
+        // Restart a single service (used by manual and confirmation flows)
+        async function restartService(service) {
+            try {
+                const response = await fetch('/dashboard/api/restart-service', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        serviceName: service.name,
+                        restartCommand: service.restartCommand
+                    })
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log(`✅ Restarted ${service.name}`);
+                    showToast(`${service.name} restarted`, 'success', 3000);
+                    if (result.isDashboardRestart) {
+                        console.log('🔁 Dashboard restarting in 5s...');
+                        setTimeout(() => window.location.reload(), 5000);
+                    }
+                } else {
+                    const err = await response.json().catch(() => ({}));
+                    showToast(`Failed to restart ${service.name}: ${err.error || 'unknown error'}`, 'error');
+                }
+            } catch (e) {
+                console.warn(`⚠️ Restart error for ${service.name}`, e);
+                showToast(`Error restarting ${service.name}`, 'error');
             }
         }
         

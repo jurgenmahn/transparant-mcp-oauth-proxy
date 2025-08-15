@@ -35,7 +35,7 @@ done
 source /.buildvars
 
 echo set file and folder rights for hydra DB
-chown nonroot:nonroot /hydra-data/hydra.sqlite
+#chown nonroot:nonroot /hydra-data/hydra.sqlite
 chmod 666 /hydra-data/hydra.sqlite
 
 # NVM path
